@@ -118,7 +118,15 @@ python run_tune_hyperparameters.py   # actual-formation variant
 python run_tune_prematch.py          # pre-match (recent-formation) variant
 ```
 
-All five scripts append to the same `outputs/outcome_model_metrics.json`
+...or the wider Optuna search instead (also a few minutes each; appends
+`<model>_optuna` entries):
+
+```bash
+python run_tune_optuna.py            # actual-formation variant
+python run_tune_optuna_prematch.py   # pre-match variant
+```
+
+All seven scripts append to the same `outputs/outcome_model_metrics.json`
 rather than overwriting each other, so results from every run you've done
 stay visible side by side.
 
@@ -267,6 +275,43 @@ model, Random Forest/pre-match as the pre-kickoff-legal one. Tuned models
 save to `outputs/models/*_tuned.joblib` alongside the untuned ones rather
 than replacing them, so all of them are there to compare.
 
+#### Wider search with Optuna
+
+`src/tune_optuna.py` goes well beyond the GridSearchCV grid: 9 hyperparameters
+for the forest instead of 3 (`n_estimators`, `max_depth`, `min_samples_leaf`,
+`min_samples_split`, `max_features`, `criterion`), continuous log-scale
+ranges instead of 2-3 fixed values for XGBoost's `learning_rate`/`subsample`/
+`colsample_bytree`/`gamma`/`reg_alpha`/`reg_lambda`, and TPE (Bayesian)
+sampling instead of exhaustive enumeration so 50 trials can actually cover
+that space (`run_tune_optuna.py`, `run_tune_optuna_prematch.py`). Same
+`TimeSeriesSplit` CV underneath, for a fair comparison against both the
+untuned and GridSearchCV numbers:
+
+| | Untuned | GridSearchCV | Optuna (50 trials) |
+|---|---|---|---|
+| Random Forest, actual | **0.464** | 0.462 | 0.460 |
+| XGBoost, actual | **0.489** | 0.476 | 0.477 |
+| Random Forest, pre-match | **0.481** | 0.475 | 0.469 |
+| XGBoost, pre-match | **0.467** | 0.459 | 0.465 |
+
+*(macro F1 on the real held-out test set; bold = best per row)*
+
+**Untuned wins all 4 rows, across two different search strategies.** Optuna
+did find marginally better cross-validation scores than GridSearchCV every
+time (e.g. actual-formation Random Forest: CV macro-F1 0.441 vs. 0.435) —
+the wider space and smarter sampler are doing their job — but that
+didn't translate into a better *test* score in 3 of 4 cases either (Optuna
+beat GridSearchCV on the real test set only for the two XGBoost rows, by
+0.001-0.006, both still below untuned). This is the same CV-vs-test gap
+from the GridSearchCV section, just confirmed a second way: the problem
+was never "the grid wasn't wide enough," it's that `TimeSeriesSplit`'s
+early, data-starved folds are a noisier optimization target than the
+final large evaluation, and no amount of extra search coverage fixes a
+noisy target — it just finds sharper ways to overfit to the noise. Fixing
+it for real would mean addressing the CV signal itself (more folds, a
+purged/embargoed CV variant, or simply more historical seasons of data),
+not searching harder over the same one.
+
 ## Configuration
 
 Everything tunable lives in `config.py`:
@@ -346,11 +391,12 @@ Everything tunable lives in `config.py`:
   formation profile — slots in as a model trained on
   `outputs/coach_impact_rankings.csv` plus a coach-history feature table
   built from `coach_preferred_formations.csv`.
-- `src/tune_hyperparameters.py` covers a modest grid; a wider one or
-  `Optuna`/`RandomizedSearchCV` might turn up something the current grid
-  doesn't reach — though per the tuning section above, don't expect much
-  from this dataset size without also addressing the CV-vs-test-score gap
-  (e.g. more `TimeSeriesSplit` folds, or a purged/embargoed CV variant).
+- Both `GridSearchCV` and a much wider `Optuna` search underperformed the
+  untuned defaults, consistently, across both formation variants (see
+  "Wider search with Optuna" above) — the actual lever left to pull is the
+  CV signal itself, not more search: more `TimeSeriesSplit` folds, a
+  purged/embargoed CV variant, or just more historical seasons of data
+  once they exist.
 - Try target = expected points / goal difference (regression) instead of
   win/draw/loss (classification) — draws are inherently the hardest class
   here, and a lot of that difficulty may just wash out with a continuous
