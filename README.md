@@ -1,0 +1,139 @@
+# Bundesliga Coach Impact Analyzer
+
+Does a coaching change actually change results? And does the incoming coach
+bring a different formation with them? This pipeline builds a match-level
+Bundesliga dataset (results, formations, xG, PPDA) with the coach in charge
+of each match attached, then:
+
+1. **Coach impact rankings** — for every coaching change, compares
+   points-per-game / goal difference / xG difference / PPDA in the matches
+   immediately before vs. after, and ranks changes by biggest swing.
+2. **Formation matchup matrix** — average points won per game for every
+   (team formation, opponent formation) pairing, as a heatmap.
+3. **Coach preferred formations** — each coach's most-used formation during
+   their tenure, joined onto the impact rankings so you can see whether a
+   PPG swing came with a tactical change too.
+
+## Data sources
+
+| Data | Source | How |
+|---|---|---|
+| Results + formations | [FBref](https://fbref.com) | [`soccerdata.FBref`](https://soccerdata.readthedocs.io/en/latest/datasources/FBref.html) |
+| xG + PPDA (pressing) | [Understat](https://understat.com) | [`soccerdata.Understat`](https://soccerdata.readthedocs.io/en/latest/datasources/Understat.html) |
+| Coach tenure dates | Transfermarkt "Trainerhistorie" pages | `src/fetch_coach_history.py` (custom scraper) + manual CSV fallback |
+
+`soccerdata` doesn't cover Transfermarkt or any manager-history source, so
+coach tenure is the one piece scraped by hand here. Wikipedia was tried
+first — the plan was to use its "List of `<club>` managers" pages, which
+looked clean and scraper-friendly — but verified live, Bundesliga clubs
+mostly don't have that page on English Wikipedia (every guessed URL 404'd).
+Transfermarkt's own manager-history table turned out to be the reliable
+source: it returns a normal 200 to a plain `requests` call with a browser
+User-Agent (no login/JS wall for this page), and the URL only cares about
+the club's numeric id, verified live for Bayern Munich and Heidenheim.
+Treat `data/coach_history_manual.csv` as the correction file: it
+overrides/augments whatever the scraper produces, and is where you fill in
+any club with no id in `config.CLUB_TRANSFERMARKT_ID` (logged clearly when
+that happens) or patch a spell it got wrong.
+
+## Setup
+
+Requires **Python 3.10+** (`soccerdata` doesn't support 3.9). On this
+machine that means using `/opt/homebrew/bin/python3.13` rather than the
+system `python3`.
+
+```bash
+cd bundesliga-coach-impact
+/opt/homebrew/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+FBref access goes through a headless Chrome driver under the hood
+(`soccerdata` uses `seleniumbase`) — the first run downloads a matching
+`chromedriver` automatically.
+
+## Run
+
+```bash
+python run_pipeline.py
+```
+
+This runs, in order: FBref fetch → Understat fetch → coach-history fetch →
+merge → coach-impact analysis → formation-matrix analysis. Outputs land in
+`outputs/`:
+
+- `coach_impact_rankings.csv`
+- `formation_matchup_matrix.csv` + `formation_matchup_heatmap.png`
+- `coach_preferred_formations.csv`
+
+Already have raw data cached and just want to re-run the analysis (e.g.
+after editing `config.IMPACT_WINDOW`)?
+
+```bash
+python run_pipeline.py --skip-fetch
+```
+
+Or run one stage at a time while iterating:
+
+```bash
+python -m src.fetch_fbref
+python -m src.fetch_understat
+python -m src.fetch_coach_history
+python -m src.build_dataset
+python -m src.coach_impact
+python -m src.formation_matrix
+```
+
+## Configuration
+
+Everything tunable lives in `config.py`:
+
+- `SEASONS` — how far back to pull. Formation and PPDA coverage is reliable
+  from ~2014-15 onward; the default is the last 6 seasons to keep first-run
+  scraping time reasonable.
+- `CLUB_TRANSFERMARKT_ID` — team name → Transfermarkt numeric club id, used
+  to build that club's manager-history URL. Newly promoted clubs not yet in
+  this dict need their id looked up (see the comment above the dict in
+  `config.py`) or their tenure data entered via the manual CSV instead.
+- `TEAM_NAME_MAP` — Understat's team names don't match FBref's; this maps
+  Understat's spelling to the canonical FBref one used everywhere else.
+  `build_dataset.py` logs any Understat team name it can't map.
+- `IMPACT_WINDOW` — how many matches before/after a coaching change count as
+  the "before" and "after" samples (default 8).
+
+## Known rough edges (this is a scaffold, not a finished pipeline)
+
+- **Column names**: the exact columns `soccerdata` returns can shift
+  slightly between versions. Every fetch script logs the columns it got on
+  first run — if `build_dataset.py` or `formation_matrix.py` throws a
+  `KeyError`/`RuntimeError`, check that log line first before assuming the
+  scraper logic is wrong.
+- **Transfermarkt club ids**: only Bayern Munich (27) and Heidenheim (2036)
+  were individually verified live; the rest of `CLUB_TRANSFERMARKT_ID` are
+  Transfermarkt's well-known stable ids but weren't each re-checked. The
+  scraper compares the fetched page's `<title>` against the club name and
+  logs a loud warning if an id looks wrong, so a bad id won't fail
+  silently — but do spot-check `data/processed/coach_history.csv` against
+  the live Transfermarkt page for a club or two before trusting the impact
+  rankings. Very short caretaker spells (a handful of matches) are the most
+  likely thing to produce a noisy-looking row — `matches_before`/
+  `matches_after` in the output tell you when a row is thin.
+- **FBref rate limiting**: `soccerdata` paces requests to be polite, so a
+  fresh 6-season pull takes a few minutes, not seconds. Cached responses
+  live under `data/raw/` (soccerdata also has its own cache dir under
+  `~/soccerdata/data/`) so re-running doesn't re-fetch everything.
+- **Small-sample cells**: the formation heatmap hides any (formation,
+  opponent formation) pairing with fewer than `MIN_MATCHUP_SAMPLES` (5)
+  matches — a single upset shouldn't paint a whole cell green or red.
+
+## Extending
+
+- Swap `config.LEAGUE`/`SEASONS` to `"GER-Bundesliga2"` (verify the exact
+  code via `soccerdata.FBref(leagues=...).available_leagues()`) to run the
+  same pipeline on 2. Bundesliga.
+- The "new coach bounce predictor" idea from the brainstorm — predicting
+  swing size from pre-change form + incoming coach's historical PPDA/
+  formation profile — slots in as a model trained on
+  `outputs/coach_impact_rankings.csv` plus a coach-history feature table
+  built from `coach_preferred_formations.csv`.
