@@ -108,18 +108,19 @@ instead of actual matchday formation — see
 python run_prematch_predictor.py
 ```
 
-...and optionally grid-search hyperparameters for the actual-formation
-variant (takes a few minutes; appends `<model>_tuned` entries to
+...and optionally grid-search hyperparameters for either variant (takes a
+few minutes each; appends `<model>_tuned` entries to
 `outcome_model_metrics.json` alongside the untuned ones rather than
 replacing them):
 
 ```bash
-python run_tune_hyperparameters.py
+python run_tune_hyperparameters.py   # actual-formation variant
+python run_tune_prematch.py          # pre-match (recent-formation) variant
 ```
 
-All three append to the same `outputs/outcome_model_metrics.json` rather
-than overwriting each other, so results from every run you've done stay
-visible side by side.
+All five scripts append to the same `outputs/outcome_model_metrics.json`
+rather than overwriting each other, so results from every run you've done
+stay visible side by side.
 
 ## Formation-aware outcome predictor
 
@@ -229,31 +230,42 @@ matches from *after* the ones it validates against within the same fold,
 reintroducing the exact leakage the outer train/test split already guards
 against, just one level down. Grid: `n_estimators`/`max_depth`/
 `min_samples_leaf` for the forest, plus `learning_rate`/`subsample` for
-XGBoost (12 and 16 combinations respectively, x5 CV folds each).
+XGBoost (12 and 16 combinations respectively, x5 CV folds each). Works
+against either formation variant (`run_tune_hyperparameters.py` for
+actual-formation, `run_tune_prematch.py` for the pre-match one).
 
-Honest result: **tuning didn't help, and slightly hurt both models** on the
-real held-out test set, despite finding better configurations by CV score
-during the search itself:
+Honest result, now run against **both** formation variants: **tuning
+didn't help, and slightly hurt every single model** on the real held-out
+test set — 4 for 4 — despite finding better configurations by CV score
+during the search itself every time:
 
 | | CV macro-F1 (search) | Test accuracy | Test macro F1 |
 |---|---|---|---|
-| Random Forest (untuned) | — | 47.8% | 0.464 |
-| Random Forest (tuned) | 0.435 | 48.0% | 0.462 |
-| XGBoost (untuned) | — | 49.7% | **0.489** |
-| XGBoost (tuned) | 0.411 | 49.2% | 0.476 |
+| Random Forest, actual (untuned) | — | 47.8% | 0.464 |
+| Random Forest, actual (tuned) | 0.435 | 48.0% | 0.462 |
+| XGBoost, actual (untuned) | — | 49.7% | **0.489** |
+| XGBoost, actual (tuned) | 0.411 | 49.2% | 0.476 |
+| Random Forest, pre-match (untuned) | — | 49.3% | 0.481 |
+| Random Forest, pre-match (tuned) | 0.438 | 48.7% | 0.475 |
+| XGBoost, pre-match (untuned) | — | 47.8% | 0.467 |
+| XGBoost, pre-match (tuned) | 0.409 | 47.3% | 0.459 |
 
 The gap between the tuned configs' CV scores (0.41-0.44) and their eventual
-test scores (0.46-0.48) is the tell: `TimeSeriesSplit`'s early folds train
-on very little data and are noisier than the final full-training-set +
-602-match holdout evaluation, so the search is optimizing against a shakier
-signal than the number it's ultimately judged on. With a dataset this size
-(3,388 training matches) and hand-picked starting hyperparameters that
-were already reasonable, there wasn't much on the table for tuning to find
-— and reporting that honestly is more useful than re-running the grid
-until a lucky seed looks better. The untuned XGBoost model remains the one
-actually worth using; tuned models are saved to
-`outputs/models/*_tuned.joblib` alongside the untuned ones rather than
-replacing them, so both are there to compare.
+test scores (0.46-0.49) is the tell, and it shows up identically in all 4
+runs: `TimeSeriesSplit`'s early folds train on very little data and are
+noisier than the final full-training-set + 602-match holdout evaluation, so
+the search is optimizing against a shakier signal than the number it's
+ultimately judged on. That this reproduces across both formation variants
+(4 independent tuning runs, not 2) is stronger evidence for "the CV setup
+is the limiting factor here" than any one of them alone — with a dataset
+this size (3,388 training matches) and hand-picked starting hyperparameters
+that were already reasonable, there wasn't much on the table for tuning to
+find, and reporting that honestly across the board is more useful than
+re-running grids until a lucky seed looks better. The untuned models remain
+the ones actually worth using — XGBoost/actual-formation as the explanatory
+model, Random Forest/pre-match as the pre-kickoff-legal one. Tuned models
+save to `outputs/models/*_tuned.joblib` alongside the untuned ones rather
+than replacing them, so all of them are there to compare.
 
 ## Configuration
 
@@ -334,10 +346,6 @@ Everything tunable lives in `config.py`:
   formation profile — slots in as a model trained on
   `outputs/coach_impact_rankings.csv` plus a coach-history feature table
   built from `coach_preferred_formations.csv`.
-- Hyperparameter-tune the pre-match variant too (`run_tune_hyperparameters.py`
-  currently only tunes the actual-formation models) — with Random Forest
-  the stronger pre-match option, its 12-combo grid is cheap to point at
-  `FORMATION_COLS_PREMATCH` instead.
 - `src/tune_hyperparameters.py` covers a modest grid; a wider one or
   `Optuna`/`RandomizedSearchCV` might turn up something the current grid
   doesn't reach — though per the tuning section above, don't expect much

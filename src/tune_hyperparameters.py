@@ -47,7 +47,7 @@ from xgboost import XGBClassifier
 
 import config
 from src.features import build_feature_table
-from src.outcome_predictor import CATEGORICAL, NUMERIC, _build_pipeline, _split
+from src.outcome_predictor import FORMATION_COLS_ACTUAL, NUMERIC, _build_pipeline, _split
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -77,7 +77,16 @@ def _grid_search(pipe, param_grid: dict, X, y, tscv: TimeSeriesSplit) -> GridSea
     return search
 
 
-def tune_and_evaluate() -> dict:
+def tune_and_evaluate(
+    formation_cols: list[str] = FORMATION_COLS_ACTUAL,
+    variant: str = "",
+) -> dict:
+    """variant: suffix appended to every tuned-model name / metrics key,
+    e.g. "_prematch" when formation_cols=FORMATION_COLS_PREMATCH. Empty
+    string (default) reproduces the original actual-formation tuning run,
+    same "<model>_tuned" keys as before this parameter existed."""
+    categorical = formation_cols + ["venue"]
+
     df = build_feature_table()
     train, test = _split(df)
     # TimeSeriesSplit needs chronological order -- the feature table already
@@ -87,7 +96,7 @@ def tune_and_evaluate() -> dict:
     le = LabelEncoder()
     y_train = le.fit_transform(train["result"])
     y_test = le.transform(test["result"])
-    X_train, X_test = train[CATEGORICAL + NUMERIC], test[CATEGORICAL + NUMERIC]
+    X_train, X_test = train[categorical + NUMERIC], test[categorical + NUMERIC]
 
     tscv = TimeSeriesSplit(n_splits=N_CV_SPLITS)
     sample_weight = compute_sample_weight("balanced", y_train)
@@ -99,22 +108,22 @@ def tune_and_evaluate() -> dict:
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Random Forest: class_weight is a constructor arg, no routing needed ---
-    log.info("Grid-searching random_forest (%d combos x %d CV splits)...",
-              np.prod([len(v) for v in RF_PARAM_GRID.values()]), N_CV_SPLITS)
+    log.info("Grid-searching random_forest%s (%d combos x %d CV splits)...",
+              variant, np.prod([len(v) for v in RF_PARAM_GRID.values()]), N_CV_SPLITS)
     rf_pipe = _build_pipeline(RandomForestClassifier(
         class_weight="balanced", random_state=42, n_jobs=1,  # n_jobs=1: GridSearchCV parallelizes instead
-    ))
+    ), categorical)
     rf_search = _grid_search(rf_pipe, RF_PARAM_GRID, X_train, y_train, tscv)
     rf_best = rf_search.best_estimator_  # already refit on all of X_train/y_train
     rf_pred = rf_best.predict(X_test)
 
     # --- XGBoost: search unweighted, then refit the winning config weighted ---
-    log.info("Grid-searching xgboost (%d combos x %d CV splits)...",
-              np.prod([len(v) for v in XGB_PARAM_GRID.values()]), N_CV_SPLITS)
+    log.info("Grid-searching xgboost%s (%d combos x %d CV splits)...",
+              variant, np.prod([len(v) for v in XGB_PARAM_GRID.values()]), N_CV_SPLITS)
     xgb_pipe = _build_pipeline(XGBClassifier(
         objective="multi:softprob", num_class=3, random_state=42, n_jobs=1,
         eval_metric="mlogloss",
-    ))
+    ), categorical)
     xgb_search = _grid_search(xgb_pipe, XGB_PARAM_GRID, X_train, y_train, tscv)
     # Refit with the best params, this time with balanced sample weights, to
     # stay comparable with the weighted untuned XGBoost run.
@@ -123,8 +132,8 @@ def tune_and_evaluate() -> dict:
     xgb_pred = xgb_best.predict(X_test)
 
     results = {
-        "random_forest_tuned": (rf_search, rf_best, rf_pred),
-        "xgboost_tuned": (xgb_search, xgb_best, xgb_pred),
+        f"random_forest{variant}_tuned": (rf_search, rf_best, rf_pred),
+        f"xgboost{variant}_tuned": (xgb_search, xgb_best, xgb_pred),
     }
 
     for name, (search, best_model, pred) in results.items():
@@ -146,13 +155,15 @@ def tune_and_evaluate() -> dict:
     metrics_path.write_text(json.dumps(metrics, indent=2, default=str))
     log.info("Updated %s with tuned results", metrics_path)
 
-    untuned_rf = metrics.get("random_forest", {})
-    untuned_xgb = metrics.get("xgboost", {})
+    untuned_rf = metrics.get(f"random_forest{variant}", {})
+    untuned_xgb = metrics.get(f"xgboost{variant}", {})
     if untuned_rf and untuned_xgb:
         log.info(
-            "Tuning delta -- random_forest: macro_f1 %.3f -> %.3f | xgboost: macro_f1 %.3f -> %.3f",
-            untuned_rf.get("macro_f1", float("nan")), metrics["random_forest_tuned"]["macro_f1"],
-            untuned_xgb.get("macro_f1", float("nan")), metrics["xgboost_tuned"]["macro_f1"],
+            "Tuning delta -- random_forest%s: macro_f1 %.3f -> %.3f | xgboost%s: macro_f1 %.3f -> %.3f",
+            variant, untuned_rf.get("macro_f1", float("nan")),
+            metrics[f"random_forest{variant}_tuned"]["macro_f1"],
+            variant, untuned_xgb.get("macro_f1", float("nan")),
+            metrics[f"xgboost{variant}_tuned"]["macro_f1"],
         )
 
     return metrics
