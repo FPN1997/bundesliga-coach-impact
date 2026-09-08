@@ -9,18 +9,23 @@ model that looks great in-sample and is useless in reality (it would be
 "predicting" a match partly from its own result), so it gets called out
 explicitly at every rolling computation below rather than assumed obvious.
 
-One deliberate exception: `formation` and `opp_formation` are the formations
-actually fielded IN that match, not a forecast of what a team will line up
-in. That makes this a "which formation choices tend to pair with wins,
-controlling for form and home advantage" model -- an explanatory tool, not
-a pre-kickoff bookmaker-style predictor. See README's outcome-predictor
-section for the honest framing and how you'd extend this to a true
-pre-match predictor (use each team's recent modal formation instead).
+`formation` and `opp_formation` are the formations actually fielded IN that
+match, not a forecast of what a team will line up in -- fine for asking
+"which formation choices tend to pair with wins" (see formation_matrix.py
+and outcome_predictor.py's default run), not fine for a genuine pre-match
+forecaster, since you don't know the opponent's exact matchday formation
+before kickoff. `recent_formation`/`opp_recent_formation` are the
+leak-safe alternative for that: each team's most common formation over
+its last ROLLING_WINDOW matches, computed the same shift-safe way as
+everything else here (the match being featurized is never included in its
+own "recent formation"). Both pairs are included in the feature table so
+outcome_predictor.py can be pointed at either.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter, deque
 from pathlib import Path
 
 import pandas as pd
@@ -32,6 +37,29 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 ROLLING_WINDOW = config.FEATURE_ROLLING_WINDOW
+
+
+def _rolling_mode(values: list[str | None], window: int) -> list[str | None]:
+    """values[i]'s output is the most common non-null value among the
+    `window` values strictly before it (None until `window` prior values
+    are available). Ties broken by whichever formation was seen first
+    within the window -- deterministic, not that it matters much for a
+    ~3-5-way tie among Bundesliga formations.
+
+    Plain Python rather than pandas .rolling().apply(): rolling/apply
+    doesn't handle a string-valued/categorical column well (it wants a
+    numeric reduction), and a manual sliding window is both simpler and
+    faster here than fighting that."""
+    result: list[str | None] = []
+    history: deque[str] = deque(maxlen=window)
+    for v in values:
+        if len(history) < window:
+            result.append(None)
+        else:
+            result.append(Counter(history).most_common(1)[0][0])
+        if v is not None:
+            history.append(v)
+    return result
 
 
 def _one_team_features(d: pd.DataFrame) -> pd.DataFrame:
@@ -55,6 +83,8 @@ def _one_team_features(d: pd.DataFrame) -> pd.DataFrame:
         d.groupby("season")["points"]
         .transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
     )
+
+    d["recent_formation"] = _rolling_mode(d["formation"].tolist(), ROLLING_WINDOW)
     return d
 
 
@@ -105,20 +135,25 @@ def build_feature_table() -> pd.DataFrame:
 
     # Self-join: for each row, pull in the OPPONENT's own pre-match features
     # as of the same date (their "team" perspective row for this match).
-    opp_side = featured[["date", "team"] + form_cols].rename(
-        columns={"team": "opponent", **{c: f"opp_{c}" for c in form_cols}}
+    # recent_formation rides along with the other shift-safe stats here --
+    # it's computed the same way (leak-safe, per-team) and needs the same
+    # opponent-side join.
+    join_cols = form_cols + ["recent_formation"]
+    opp_side = featured[["date", "team"] + join_cols].rename(
+        columns={"team": "opponent", **{c: f"opp_{c}" for c in join_cols}}
     )
     featured = featured.merge(opp_side, on=["date", "opponent"], how="left")
 
     keep_cols = [
         "date", "season", "team", "opponent", "venue", "formation", "opp_formation",
-        "result", "points",
+        "recent_formation", "opp_recent_formation", "result", "points",
     ] + form_cols + [f"opp_{c}" for c in form_cols]
     featured = featured[keep_cols]
 
     before = len(featured)
     featured = featured.dropna(subset=form_cols + [f"opp_{c}" for c in form_cols]
-                                + ["formation", "opp_formation", "result"])
+                                + ["formation", "opp_formation",
+                                   "recent_formation", "opp_recent_formation", "result"])
     log.info("Feature table: %d rows (dropped %d with insufficient rolling history "
               "or missing formation/result -- expected for each team's first "
               "%d matches per season and any future/unplayed fixtures)",

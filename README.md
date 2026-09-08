@@ -100,13 +100,26 @@ Then, once `match_dataset.parquet` exists, train the outcome predictor:
 python run_outcome_predictor.py
 ```
 
-...and optionally grid-search its hyperparameters (takes a few minutes;
-appends `<model>_tuned` entries to `outcome_model_metrics.json` alongside
-the untuned ones rather than replacing them):
+...optionally, its genuine pre-match variant (recent-formation-tendency
+instead of actual matchday formation — see
+[below](#pre-match-forecaster-variant)):
+
+```bash
+python run_prematch_predictor.py
+```
+
+...and optionally grid-search hyperparameters for the actual-formation
+variant (takes a few minutes; appends `<model>_tuned` entries to
+`outcome_model_metrics.json` alongside the untuned ones rather than
+replacing them):
 
 ```bash
 python run_tune_hyperparameters.py
 ```
+
+All three append to the same `outputs/outcome_model_metrics.json` rather
+than overwriting each other, so results from every run you've done stay
+visible side by side.
 
 ## Formation-aware outcome predictor
 
@@ -159,10 +172,53 @@ wins more" with "teams using this formation also tend to be in better form":
 *actually fielded in that match* — known at kickoff to the two coaches, not
 to a forecaster the day before. That makes this an explanatory model
 ("which formation choices tend to pair with wins, controlling for form") 
-rather than a pre-kickoff bookmaker-style predictor. To turn it into a true
-pre-match predictor, swap in each team's recent modal formation (e.g. most
-common formation over their last 5 matches, itself shift-safe) instead of
-the actual matchday formation — a natural next extension.
+rather than a pre-kickoff bookmaker-style predictor.
+
+### Pre-match forecaster variant
+
+`python run_prematch_predictor.py` trains the genuine pre-match version:
+`formation`/`opp_formation` swapped for `recent_formation`/
+`opp_recent_formation` — each team's most common formation over its last
+`FEATURE_ROLLING_WINDOW` matches, computed the same shift-safe way as every
+other feature (see `src/features.py`'s `_rolling_mode`). Recent-formation
+matches the actual matchday formation only about half the time, so this is
+a genuinely different, noisier categorical signal — not a formality.
+
+The result isn't the clean "pre-match is a bit worse, as expected" story
+you'd guess going in:
+
+| | Actual formation | Recent-formation (pre-match) | Δ macro F1 |
+|---|---|---|---|
+| Random Forest | 0.464 | **0.481** | **+0.017** |
+| XGBoost | **0.489** | 0.467 | −0.022 |
+
+Random Forest actually *improves* on the pre-match feature, XGBoost gets
+slightly worse — the opposite pattern for each model. The explanation is
+in the data, not the models being fussy: `formation` has 19 distinct
+categories in this dataset (many one-off, rare tactical tweaks), while
+`recent_formation` has 16, with more mass concentrated on the handful of
+formations teams actually settle into. Random Forest's default splits
+(`min_samples_leaf=5`) are prone to carving out noisy little leaves for
+rare formation categories; smoothing that away by using recent tendency
+instead evidently helps more than the lost information hurts. XGBoost's
+boosted-tree regularization was apparently already handling that noise
+well enough that the real signal in knowing the *exact* matchday formation
+outweighs it. You can see this in the feature importances too — recent
+Random Forest leans almost entirely on numeric form/PPDA/coach-tenure
+features with `recent_formation` barely registering, while XGBoost still
+finds several `recent_formation` categories worth real weight:
+
+![Pre-match variant feature importance — Random Forest leans on numeric form features, XGBoost still weights several recent_formation categories](docs/outcome_feature_importance_prematch.png)
+
+**Bottom line**: if you actually need a pre-kickoff forecast (the entire
+point of "pre-match"), XGBoost with actual-formation training data isn't
+usable — you don't have that data before kickoff. Between the two
+pre-match-legal options, **Random Forest on recent-formation (0.481 macro
+F1) is the one to use**, and it's competitive with — not meaningfully worse
+than — the explanatory XGBoost model that gets to see the real matchday
+formation (0.489). That's a more useful and more interesting finding than
+either "formation doesn't matter" or "of course the honest version is
+worse" would have been.
 
 ### Hyperparameter tuning
 
@@ -278,10 +334,10 @@ Everything tunable lives in `config.py`:
   formation profile — slots in as a model trained on
   `outputs/coach_impact_rankings.csv` plus a coach-history feature table
   built from `coach_preferred_formations.csv`.
-- Turn the outcome predictor into a genuine pre-match forecaster: swap
-  `formation`/`opp_formation` in `src/features.py` for each team's recent
-  modal formation (mode over their last N matches, shift-safe like every
-  other feature there) instead of the formation actually fielded that day.
+- Hyperparameter-tune the pre-match variant too (`run_tune_hyperparameters.py`
+  currently only tunes the actual-formation models) — with Random Forest
+  the stronger pre-match option, its 12-combo grid is cheap to point at
+  `FORMATION_COLS_PREMATCH` instead.
 - `src/tune_hyperparameters.py` covers a modest grid; a wider one or
   `Optuna`/`RandomizedSearchCV` might turn up something the current grid
   doesn't reach — though per the tuning section above, don't expect much

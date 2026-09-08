@@ -2,12 +2,23 @@
 Formation-aware match outcome predictor.
 
 Trains two classifiers (Random Forest, XGBoost) to predict a team's match
-result (win/draw/loss) from the formations both sides fielded plus recent
-form (rolling PPG, goal difference, xG difference, PPDA, season-to-date PPG)
-and how long the current coach has been in charge. See src/features.py's
-docstring for why "formation used in the match" makes this an explanatory
-model (which formation choices tend to pair with wins) rather than a
-pre-kickoff forecaster.
+result (win/draw/loss) from formation plus recent form (rolling PPG, goal
+difference, xG difference, PPDA, season-to-date PPG) and how long the
+current coach has been in charge. Runs in two variants, selected by
+`formation_cols`/`variant`:
+
+  - "actual" (default): formation/opp_formation, the formations actually
+    fielded in the match. An explanatory model -- "which formation choices
+    tend to pair with wins" -- not a pre-kickoff forecaster, since you don't
+    know the exact matchday formation before kickoff.
+  - "prematch": recent_formation/opp_recent_formation (each team's modal
+    formation over its last few matches, shift-safe -- see features.py).
+    A genuine pre-match forecaster: everything it uses is knowable before
+    kickoff. Weaker signal (recent-formation only matches the actual
+    matchday formation about half the time), so expect somewhat lower
+    accuracy than the "actual" variant -- that gap IS the answer to "how
+    much does knowing the exact formation help over just knowing a team's
+    recent tendency."
 
 Evaluation uses a TIME-based split (config.TEST_SEASONS held out entirely),
 never a random split -- a random split would leak future form/results into
@@ -16,14 +27,16 @@ accuracy. Compared against two baselines: always-predict-majority-class, and
 always-predict-home-team-wins (the simplest signal a model needs to beat to
 be worth anything).
 
-Outputs to outputs/:
-  - models/random_forest.joblib, models/xgboost.joblib
-  - outcome_model_metrics.json          -- accuracy/F1 vs baselines
-  - outcome_confusion_matrix.png
-  - outcome_feature_importance.png
-  - formation_matchup_predicted.csv/png -- model-predicted win rate per
-    (formation, opp_formation), i.e. the earlier formation_matrix.py
-    heatmap's numbers, but adjusted for form/home-advantage instead of raw.
+Outputs to outputs/ (file/key names get a "_prematch" suffix for that variant):
+  - models/random_forest[_prematch].joblib, models/xgboost[_prematch].joblib
+  - outcome_model_metrics.json                    -- accuracy/F1 vs baselines,
+    keyed by "random_forest"/"xgboost"/"random_forest_prematch"/"xgboost_prematch"
+  - outcome_confusion_matrix[_prematch].png
+  - outcome_feature_importance[_prematch].png
+  - formation_matchup_predicted[_prematch].csv/png -- model-predicted win
+    rate per (formation, opp_formation) pairing, i.e. the earlier
+    formation_matrix.py heatmap's numbers, but adjusted for form/home
+    advantage instead of raw.
 """
 
 from __future__ import annotations
@@ -51,7 +64,9 @@ from src.features import build_feature_table
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-CATEGORICAL = ["formation", "opp_formation", "venue"]
+FORMATION_COLS_ACTUAL = ["formation", "opp_formation"]
+FORMATION_COLS_PREMATCH = ["recent_formation", "opp_recent_formation"]
+CATEGORICAL = FORMATION_COLS_ACTUAL + ["venue"]  # kept for backward compatibility
 NUMERIC = [
     "form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda", "season_ppg_to_date",
     "coach_tenure_days", "opp_form_ppg", "opp_form_goal_diff", "opp_form_xg_diff",
@@ -80,9 +95,9 @@ def _split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return train, test
 
 
-def _build_pipeline(model) -> Pipeline:
+def _build_pipeline(model, categorical: list[str] = CATEGORICAL) -> Pipeline:
     pre = ColumnTransformer([
-        ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
         ("num", "passthrough", NUMERIC),
     ])
     return Pipeline([("pre", pre), ("model", model)])
@@ -106,7 +121,16 @@ def _baselines(y_train: pd.Series, y_test: pd.Series, venue_test: pd.Series) -> 
     }
 
 
-def train_and_evaluate() -> dict:
+def train_and_evaluate(
+    formation_cols: list[str] = FORMATION_COLS_ACTUAL,
+    variant: str = "",
+) -> dict:
+    """variant: suffix appended to every model name / output filename, e.g.
+    "_prematch" when formation_cols=FORMATION_COLS_PREMATCH. Empty string
+    (default) reproduces the original "actual formation" run exactly, same
+    filenames as before this parameter existed."""
+    categorical = formation_cols + ["venue"]
+
     df = build_feature_table()
     train, test = _split(df)
 
@@ -121,18 +145,20 @@ def train_and_evaluate() -> dict:
     # accuracy for actually attempting the hardest class -- report both,
     # don't just take the higher raw-accuracy number.
     models = {
-        "random_forest": RandomForestClassifier(
+        f"random_forest{variant}": RandomForestClassifier(
             n_estimators=400, max_depth=10, min_samples_leaf=5,
             class_weight="balanced", random_state=42, n_jobs=-1,
         ),
-        "xgboost": XGBClassifier(
+        f"xgboost{variant}": XGBClassifier(
             n_estimators=300, max_depth=4, learning_rate=0.05,
             objective="multi:softprob", num_class=3,
             random_state=42, n_jobs=-1, eval_metric="mlogloss",
         ),
     }
 
-    metrics = {"baselines": _baselines(train["result"], test["result"], test["venue"])}
+    metrics_path = Path(config.OUTPUT_DIR) / "outcome_model_metrics.json"
+    metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
+    metrics["baselines"] = _baselines(train["result"], test["result"], test["venue"])
     model_dir = Path(config.MODEL_DIR)
     model_dir.mkdir(parents=True, exist_ok=True)
     fitted = {}
@@ -143,10 +169,10 @@ def train_and_evaluate() -> dict:
     sample_weight = compute_sample_weight("balanced", y_train)
 
     for name, model in models.items():
-        pipe = _build_pipeline(model)
-        fit_kwargs = {"model__sample_weight": sample_weight} if name == "xgboost" else {}
-        pipe.fit(train[CATEGORICAL + NUMERIC], y_train, **fit_kwargs)
-        pred = pipe.predict(test[CATEGORICAL + NUMERIC])
+        pipe = _build_pipeline(model, categorical)
+        fit_kwargs = {"model__sample_weight": sample_weight} if "xgboost" in name else {}
+        pipe.fit(train[categorical + NUMERIC], y_train, **fit_kwargs)
+        pred = pipe.predict(test[categorical + NUMERIC])
 
         acc = accuracy_score(y_test_encoded, pred)
         f1 = f1_score(y_test_encoded, pred, average="macro")
@@ -164,20 +190,19 @@ def train_and_evaluate() -> dict:
         joblib.dump(pipe, model_dir / f"{name}.joblib")
         fitted[name] = (pipe, pred)
 
-    joblib.dump(le, model_dir / "label_encoder.joblib")
+    joblib.dump(le, model_dir / f"label_encoder{variant}.joblib")
 
-    out_path = Path(config.OUTPUT_DIR) / "outcome_model_metrics.json"
-    out_path.write_text(json.dumps(metrics, indent=2, default=str))
-    log.info("Saved metrics -> %s", out_path)
+    metrics_path.write_text(json.dumps(metrics, indent=2, default=str))
+    log.info("Saved metrics -> %s", metrics_path)
 
-    _plot_confusion_matrices(fitted, y_test_encoded, le.classes_)
-    _plot_feature_importance(fitted, test)
-    _formation_matchup_predicted(fitted["xgboost"][0], df)
+    _plot_confusion_matrices(fitted, y_test_encoded, le.classes_, variant)
+    _plot_feature_importance(fitted, variant)
+    _formation_matchup_predicted(fitted[f"xgboost{variant}"][0], df, categorical, le, variant)
 
     return metrics
 
 
-def _plot_confusion_matrices(fitted: dict, y_test: pd.Series, class_names) -> None:
+def _plot_confusion_matrices(fitted: dict, y_test: pd.Series, class_names, variant: str = "") -> None:
     fig, axes = plt.subplots(1, len(fitted), figsize=(6 * len(fitted), 5))
     if len(fitted) == 1:
         axes = [axes]
@@ -189,13 +214,13 @@ def _plot_confusion_matrices(fitted: dict, y_test: pd.Series, class_names) -> No
         ax.set_xlabel("Predicted")
         ax.set_ylabel("Actual")
     fig.tight_layout()
-    out_path = Path(config.OUTPUT_DIR) / "outcome_confusion_matrix.png"
+    out_path = Path(config.OUTPUT_DIR) / f"outcome_confusion_matrix{variant}.png"
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     log.info("Saved confusion matrix plot -> %s", out_path)
 
 
-def _plot_feature_importance(fitted: dict, sample: pd.DataFrame, top_n: int = 15) -> None:
+def _plot_feature_importance(fitted: dict, variant: str = "", top_n: int = 15) -> None:
     fig, axes = plt.subplots(1, len(fitted), figsize=(8 * len(fitted), 6))
     if len(fitted) == 1:
         axes = [axes]
@@ -209,47 +234,51 @@ def _plot_feature_importance(fitted: dict, sample: pd.DataFrame, top_n: int = 15
         ax.set_title(f"{name}: top {top_n} features")
         ax.set_xlabel("Importance")
     fig.tight_layout()
-    out_path = Path(config.OUTPUT_DIR) / "outcome_feature_importance.png"
+    out_path = Path(config.OUTPUT_DIR) / f"outcome_feature_importance{variant}.png"
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     log.info("Saved feature importance plot -> %s", out_path)
 
 
-def _formation_matchup_predicted(pipe: Pipeline, df: pd.DataFrame, min_samples: int = 5) -> None:
-    """Model-predicted P(win) per (formation, opp_formation), averaged over
+def _formation_matchup_predicted(
+    pipe: Pipeline, df: pd.DataFrame, categorical: list[str], le: LabelEncoder,
+    variant: str = "", min_samples: int = 5,
+) -> None:
+    """Model-predicted P(win) per (formation, opp_formation) [or their
+    recent-tendency equivalents for the prematch variant], averaged over
     every row with that pairing (using each row's OWN form/coach-tenure
     values -- this isn't "holding form constant," it's averaging the
     model's form-aware prediction across however that pairing actually
     occurred, which is the honest way to summarize a form-conditioned model
     back down to a 2D formation-only view)."""
-    proba = pipe.predict_proba(df[CATEGORICAL + NUMERIC])
-    label_encoder = joblib.load(Path(config.MODEL_DIR) / "label_encoder.joblib")
-    win_class_idx = list(label_encoder.classes_).index("W")
+    form_col, opp_form_col = categorical[0], categorical[1]
+    proba = pipe.predict_proba(df[categorical + NUMERIC])
+    win_class_idx = list(le.classes_).index("W")
     df = df.copy()
     df["predicted_win_prob"] = proba[:, win_class_idx]
 
-    grouped = df.groupby(["formation", "opp_formation"]).agg(
+    grouped = df.groupby([form_col, opp_form_col]).agg(
         predicted_win_prob=("predicted_win_prob", "mean"),
         actual_win_rate=("result", lambda s: (s == "W").mean()),
         n=("result", "size"),
     ).reset_index()
     grouped = grouped[grouped["n"] >= min_samples]
 
-    out_csv = Path(config.OUTPUT_DIR) / "formation_matchup_predicted.csv"
+    out_csv = Path(config.OUTPUT_DIR) / f"formation_matchup_predicted{variant}.csv"
     grouped.to_csv(out_csv, index=False)
     log.info("Saved form-adjusted formation matchup table (%d pairings) -> %s",
               len(grouped), out_csv)
 
-    pivot = grouped.pivot(index="formation", columns="opp_formation", values="predicted_win_prob")
+    pivot = grouped.pivot(index=form_col, columns=opp_form_col, values="predicted_win_prob")
     fig, ax = plt.subplots(figsize=(1.2 * pivot.shape[1] + 2, 1.0 * pivot.shape[0] + 2))
     sns.heatmap(pivot, annot=True, fmt=".2f", cmap="RdYlGn", center=0.33,
                 cbar_kws={"label": "Model-predicted P(win)"}, ax=ax)
-    ax.set_xlabel("Opponent formation")
-    ax.set_ylabel("Team formation")
+    ax.set_xlabel(f"Opponent {opp_form_col}")
+    ax.set_ylabel(f"Team {form_col}")
     ax.set_title(f"Predicted win probability by formation matchup\n"
                  f"(form/home-advantage-adjusted; cells with < {min_samples} matches hidden)")
     fig.tight_layout()
-    out_png = Path(config.OUTPUT_DIR) / "formation_matchup_predicted.png"
+    out_png = Path(config.OUTPUT_DIR) / f"formation_matchup_predicted{variant}.png"
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
     log.info("Saved form-adjusted heatmap -> %s", out_png)
