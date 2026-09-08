@@ -138,3 +138,19 @@ FBREF_LEAGUE_ROUND_PATTERN = r"^Matchweek\s+\d+$"
 # Rolling-window size (in matches) used to compare "before" vs "after" a
 # coaching change in coach_impact.py.
 IMPACT_WINDOW = 8
+
+# --- Formation/outcome predictor (src/features.py, src/outcome_predictor.py) ---
+
+# Rolling-form window size (in matches) for form_ppg/form_goal_diff/etc.
+# Also means each team's first FEATURE_ROLLING_WINDOW matches of the whole
+# dataset (not just per-season) have no features and get dropped.
+FEATURE_ROLLING_WINDOW = 5
+
+# Seasons held out as the test set -- kept in date order, trained on
+# everything strictly before the first one. 2025-2026 is a full completed
+# season (fair test); 2026-2027 is included too since it's what you'd
+# actually want predictions for, but has very few matches so treat its
+# individual metrics as low-confidence.
+TEST_SEASONS = ["2025-2026", "2026-2027"]
+
+MODEL_DIR = "outputs/models"

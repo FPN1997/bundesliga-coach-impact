@@ -16,7 +16,6 @@ digits and dashes so "4-2-3-1" and "4-2-3-1 (used from 60')" bucket together.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,6 +23,7 @@ import pandas as pd
 import seaborn as sns
 
 import config
+from src.formation_utils import clean_formation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -31,19 +31,12 @@ log = logging.getLogger(__name__)
 MIN_MATCHUP_SAMPLES = 5  # hide matchup cells with too few matches to be meaningful
 
 
-def _clean_formation(value: object) -> str | None:
-    if pd.isna(value):
-        return None
-    s = re.sub(r"[^\d\-]", "", str(value))
-    return s if s else None
-
-
 def build_formation_matrix() -> pd.DataFrame:
     df = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
 
     df = df.copy()
-    df["formation"] = df["formation"].apply(_clean_formation)
-    df["opp_formation"] = df["opp_formation"].apply(_clean_formation)
+    df["formation"] = df["formation"].apply(clean_formation)
+    df["opp_formation"] = df["opp_formation"].apply(clean_formation)
     df = df.dropna(subset=["formation", "opp_formation", "points"])
 
     grouped = df.groupby(["formation", "opp_formation"])
@@ -81,7 +74,7 @@ def coach_preferred_formations() -> pd.DataFrame:
     """Each coach's most-used formation(s) and how often they used it."""
     df = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
     df = df.copy()
-    df["formation"] = df["formation"].apply(_clean_formation)
+    df["formation"] = df["formation"].apply(clean_formation)
     df = df.dropna(subset=["coach", "formation"])
 
     summary = (

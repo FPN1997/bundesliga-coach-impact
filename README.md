@@ -13,6 +13,10 @@ of each match attached, then:
 3. **Coach preferred formations** — each coach's most-used formation during
    their tenure, joined onto the impact rankings so you can see whether a
    PPG swing came with a tactical change too.
+4. **Formation-aware outcome predictor** — Random Forest and XGBoost
+   classifiers predicting win/draw/loss from formations plus rolling form,
+   xG, PPDA, and coach tenure, evaluated on a strict time-based holdout
+   (see [below](#formation-aware-outcome-predictor)).
 
 ![Formation matchup heatmap — average points won per game for every (team formation, opponent formation) pairing across 8 Bundesliga seasons](docs/formation_matchup_heatmap.png)
 
@@ -90,13 +94,80 @@ python -m src.coach_impact
 python -m src.formation_matrix
 ```
 
+Then, once `match_dataset.parquet` exists, train the outcome predictor:
+
+```bash
+python run_outcome_predictor.py
+```
+
+## Formation-aware outcome predictor
+
+`src/features.py` builds a leak-safe feature table: every rolling/cumulative
+stat (form PPG, goal difference, xG difference, PPDA, season-to-date PPG,
+days into the current coach's tenure) is `.shift(1)`'d before any window is
+applied, so a match's features only ever come from that team's *strictly
+prior* matches. `src/outcome_predictor.py` trains a Random Forest and an
+XGBoost classifier on that table to predict win/draw/loss, with the two
+formations (own + opponent's) as categorical features alongside the form
+stats.
+
+**Evaluation is a time-based holdout** — `config.TEST_SEASONS`
+(2025-26 + the ongoing 2026-27) is held out entirely; training only ever
+sees earlier matches. A random row-level split would leak future results
+into training through the rolling features' shared history and wildly
+overstate accuracy, which is a classic way sports-prediction demos quietly
+cheat — this pipeline deliberately doesn't.
+
+Latest run (602 held-out matches):
+
+| | Accuracy | Macro F1 | vs. majority-class baseline (37.9%) | vs. home-advantage-only baseline (43.9%) |
+|---|---|---|---|---|
+| Random Forest (balanced) | 47.8% | 0.464 | +9.9pp | +3.9pp |
+| **XGBoost (balanced)** | **49.7%** | **0.489** | **+11.8pp** | **+5.8pp** |
+
+Both models clear the home-advantage baseline — the simplest signal a
+football outcome model needs to beat to be worth anything — with the draw
+class weighted to actually attempt predicting draws (unweighted, both
+models learned it's "cheapest" to never predict D at all; recall on draws
+alone jumped from 0% to 34-45% once weighted, at a small cost to overall
+accuracy). Football match prediction genuinely tops out in this range in
+published research — a much higher number here would be a leakage red flag,
+not a win.
+
+![XGBoost feature importance — form and season PPG dominate, but formation categories place throughout the top 15](docs/outcome_feature_importance.png)
+
+Formation categories place throughout the top-15 feature importances (own
+and opponent formation each contribute meaningfully, alongside home/away,
+season form, xG form, and coach tenure) — real but secondary signal, not the
+dominant one. `outputs/formation_matchup_predicted.png` shows the same
+(formation, opponent formation) heatmap as the raw one above, but built from
+the model's predicted win probability instead of the raw average — i.e.
+adjusted for form and home advantage rather than conflating "this formation
+wins more" with "teams using this formation also tend to be in better form":
+
+![Form-adjusted formation matchup heatmap](docs/formation_matchup_predicted.png)
+
+**Framing, honestly**: `formation`/`opp_formation` here are the formations
+*actually fielded in that match* — known at kickoff to the two coaches, not
+to a forecaster the day before. That makes this an explanatory model
+("which formation choices tend to pair with wins, controlling for form") 
+rather than a pre-kickoff bookmaker-style predictor. To turn it into a true
+pre-match predictor, swap in each team's recent modal formation (e.g. most
+common formation over their last 5 matches, itself shift-safe) instead of
+the actual matchday formation — a natural next extension.
+
 ## Configuration
 
 Everything tunable lives in `config.py`:
 
 - `SEASONS` — how far back to pull. Formation and PPDA coverage is reliable
-  from ~2014-15 onward; the default is the last 6 seasons to keep first-run
-  scraping time reasonable.
+  from ~2014-15 onward; the default runs 2019-20 through the ongoing
+  2026-27 season. Unplayed fixtures in an in-progress season are dropped
+  automatically in `build_dataset.py` (they'd otherwise pad out
+  matches-played counts with rows that have no actual result).
+- `FEATURE_ROLLING_WINDOW` / `TEST_SEASONS` / `MODEL_DIR` — outcome
+  predictor settings: rolling-form window size, which seasons are held out
+  for evaluation, where trained models get saved.
 - `CLUB_TRANSFERMARKT_ID` — team name → Transfermarkt numeric club id, used
   to build that club's manager-history URL. Newly promoted clubs not yet in
   this dict need their id looked up (see the comment above the dict in
@@ -131,6 +202,28 @@ Everything tunable lives in `config.py`:
 - **Small-sample cells**: the formation heatmap hides any (formation,
   opponent formation) pairing with fewer than `MIN_MATCHUP_SAMPLES` (5)
   matches — a single upset shouldn't paint a whole cell green or red.
+- **New teams each time `SEASONS` widens**: `CLUB_TRANSFERMARKT_ID` and
+  `TEAM_NAME_MAP` only cover teams actually seen in a completed run so far.
+  Widening `SEASONS` (or waiting for a new promotion) will surface a fresh
+  `No coach-history rows for team=X` / unmapped-Understat-name warning —
+  expected, not a sign something's broken; fix it the same way the existing
+  entries were resolved (verify a Transfermarkt id live against the page's
+  `<title>` before trusting it — one early guess for Greuther Fürth
+  resolved to a completely different club).
+- **A `pd.Timestamp.today()` bug already bit this once**: an early version
+  of `fetch_coach_history.py` mapped an incumbent coach's blank "still
+  active" end-date to *today's date* instead of leaving it open-ended. That
+  silently capped every current coach's tenure at scrape time, so every
+  future/in-progress-season fixture got no coach assigned at all once
+  `SEASONS` grew to include the ongoing season. Fixed by leaving it as
+  `None`/NaT and letting `build_dataset.py`'s `fillna(2100-01-01)` treat it
+  as open-ended — worth knowing about if you ever touch date parsing here.
+- **pandas 3.0 + pyarrow-backed columns**: comparing a pyarrow-backed
+  Series's raw `.values` against a plain numpy array (e.g. in a baseline
+  accuracy calculation) raises `AttributeError: 'ArrowExtensionArray'
+  object has no attribute 'mean'` instead of just working. Use `.to_numpy()`
+  rather than `.values` when you need a real numpy array out of a column
+  read from these parquet files.
 
 ## Extending
 
@@ -142,3 +235,14 @@ Everything tunable lives in `config.py`:
   formation profile — slots in as a model trained on
   `outputs/coach_impact_rankings.csv` plus a coach-history feature table
   built from `coach_preferred_formations.csv`.
+- Turn the outcome predictor into a genuine pre-match forecaster: swap
+  `formation`/`opp_formation` in `src/features.py` for each team's recent
+  modal formation (mode over their last N matches, shift-safe like every
+  other feature there) instead of the formation actually fielded that day.
+- Hyperparameter-tune (`GridSearchCV`/`Optuna`) rather than the current
+  fixed settings in `src/outcome_predictor.py` — there's real headroom
+  given how little tuning has gone in so far.
+- Try target = expected points / goal difference (regression) instead of
+  win/draw/loss (classification) — draws are inherently the hardest class
+  here, and a lot of that difficulty may just wash out with a continuous
+  target.
