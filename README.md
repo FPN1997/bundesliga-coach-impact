@@ -100,6 +100,14 @@ Then, once `match_dataset.parquet` exists, train the outcome predictor:
 python run_outcome_predictor.py
 ```
 
+...and optionally grid-search its hyperparameters (takes a few minutes;
+appends `<model>_tuned` entries to `outcome_model_metrics.json` alongside
+the untuned ones rather than replacing them):
+
+```bash
+python run_tune_hyperparameters.py
+```
+
 ## Formation-aware outcome predictor
 
 `src/features.py` builds a leak-safe feature table: every rolling/cumulative
@@ -155,6 +163,41 @@ rather than a pre-kickoff bookmaker-style predictor. To turn it into a true
 pre-match predictor, swap in each team's recent modal formation (e.g. most
 common formation over their last 5 matches, itself shift-safe) instead of
 the actual matchday formation — a natural next extension.
+
+### Hyperparameter tuning
+
+`src/tune_hyperparameters.py` grid-searches both models (`GridSearchCV`,
+scoring on macro-F1) with **`TimeSeriesSplit`, not the default random
+K-fold, for cross-validation** — a random K-fold would train on some
+matches from *after* the ones it validates against within the same fold,
+reintroducing the exact leakage the outer train/test split already guards
+against, just one level down. Grid: `n_estimators`/`max_depth`/
+`min_samples_leaf` for the forest, plus `learning_rate`/`subsample` for
+XGBoost (12 and 16 combinations respectively, x5 CV folds each).
+
+Honest result: **tuning didn't help, and slightly hurt both models** on the
+real held-out test set, despite finding better configurations by CV score
+during the search itself:
+
+| | CV macro-F1 (search) | Test accuracy | Test macro F1 |
+|---|---|---|---|
+| Random Forest (untuned) | — | 47.8% | 0.464 |
+| Random Forest (tuned) | 0.435 | 48.0% | 0.462 |
+| XGBoost (untuned) | — | 49.7% | **0.489** |
+| XGBoost (tuned) | 0.411 | 49.2% | 0.476 |
+
+The gap between the tuned configs' CV scores (0.41-0.44) and their eventual
+test scores (0.46-0.48) is the tell: `TimeSeriesSplit`'s early folds train
+on very little data and are noisier than the final full-training-set +
+602-match holdout evaluation, so the search is optimizing against a shakier
+signal than the number it's ultimately judged on. With a dataset this size
+(3,388 training matches) and hand-picked starting hyperparameters that
+were already reasonable, there wasn't much on the table for tuning to find
+— and reporting that honestly is more useful than re-running the grid
+until a lucky seed looks better. The untuned XGBoost model remains the one
+actually worth using; tuned models are saved to
+`outputs/models/*_tuned.joblib` alongside the untuned ones rather than
+replacing them, so both are there to compare.
 
 ## Configuration
 
@@ -239,9 +282,11 @@ Everything tunable lives in `config.py`:
   `formation`/`opp_formation` in `src/features.py` for each team's recent
   modal formation (mode over their last N matches, shift-safe like every
   other feature there) instead of the formation actually fielded that day.
-- Hyperparameter-tune (`GridSearchCV`/`Optuna`) rather than the current
-  fixed settings in `src/outcome_predictor.py` — there's real headroom
-  given how little tuning has gone in so far.
+- `src/tune_hyperparameters.py` covers a modest grid; a wider one or
+  `Optuna`/`RandomizedSearchCV` might turn up something the current grid
+  doesn't reach — though per the tuning section above, don't expect much
+  from this dataset size without also addressing the CV-vs-test-score gap
+  (e.g. more `TimeSeriesSplit` folds, or a purged/embargoed CV variant).
 - Try target = expected points / goal difference (regression) instead of
   win/draw/loss (classification) — draws are inherently the hardest class
   here, and a lot of that difficulty may just wash out with a continuous
