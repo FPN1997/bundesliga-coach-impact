@@ -628,6 +628,13 @@ Everything tunable lives in `config.py`:
 
 ## Extending
 
+- Understat's raw response already includes `home_deep_completions`/
+  `away_deep_completions` (confirmed live, not assumed) — it's just not
+  carried through `_melt_to_team_rows()` in `src/fetch_understat.py` or
+  used anywhere downstream (a repo-wide search for it turns up nothing).
+  A genuinely available, currently-unused signal for the "tactical
+  fingerprint" idea alongside PPDA/xG, not something that needs a new data
+  source — the smallest-effort item on this list.
 - Swap `config.LEAGUE`/`SEASONS` to `"GER-Bundesliga2"` (verify the exact
   code via `soccerdata.FBref(leagues=...).available_leagues()`) to run the
   same pipeline on 2. Bundesliga.

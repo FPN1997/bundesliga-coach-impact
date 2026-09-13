@@ -4,6 +4,7 @@ downloaded_files/
 *.pyc
 data/raw/
 data/processed/
+data/*_auto.json
 outputs/
 logs/
 .DS_Store
