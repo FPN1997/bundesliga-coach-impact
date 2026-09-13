@@ -52,7 +52,12 @@ import pandas as pd
 import seaborn as sns
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.utils.class_weight import compute_sample_weight
@@ -66,7 +71,7 @@ log = logging.getLogger(__name__)
 
 FORMATION_COLS_ACTUAL = ["formation", "opp_formation"]
 FORMATION_COLS_PREMATCH = ["recent_formation", "opp_recent_formation"]
-CATEGORICAL = FORMATION_COLS_ACTUAL + ["venue"]  # kept for backward compatibility
+CATEGORICAL = [*FORMATION_COLS_ACTUAL, "venue"]  # kept for backward compatibility
 NUMERIC = [
     "form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda", "season_ppg_to_date",
     "coach_tenure_days", "opp_form_ppg", "opp_form_goal_diff", "opp_form_xg_diff",
@@ -129,7 +134,7 @@ def train_and_evaluate(
     "_prematch" when formation_cols=FORMATION_COLS_PREMATCH. Empty string
     (default) reproduces the original "actual formation" run exactly, same
     filenames as before this parameter existed."""
-    categorical = formation_cols + ["venue"]
+    categorical = [*formation_cols, "venue"]
 
     df = build_feature_table()
     train, test = _split(df)
@@ -206,7 +211,7 @@ def _plot_confusion_matrices(fitted: dict, y_test: pd.Series, class_names, varia
     fig, axes = plt.subplots(1, len(fitted), figsize=(6 * len(fitted), 5))
     if len(fitted) == 1:
         axes = [axes]
-    for ax, (name, (_, pred)) in zip(axes, fitted.items()):
+    for ax, (name, (_, pred)) in zip(axes, fitted.items(), strict=True):
         cm = confusion_matrix(y_test, pred, labels=range(len(class_names)))
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names,
                     yticklabels=class_names, ax=ax, cbar=False)
@@ -224,7 +229,7 @@ def _plot_feature_importance(fitted: dict, variant: str = "", top_n: int = 15) -
     fig, axes = plt.subplots(1, len(fitted), figsize=(8 * len(fitted), 6))
     if len(fitted) == 1:
         axes = [axes]
-    for ax, (name, (pipe, _)) in zip(axes, fitted.items()):
+    for ax, (name, (pipe, _)) in zip(axes, fitted.items(), strict=True):
         feature_names = pipe.named_steps["pre"].get_feature_names_out()
         importances = pipe.named_steps["model"].feature_importances_
         order = np.argsort(importances)[-top_n:]

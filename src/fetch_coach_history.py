@@ -165,7 +165,7 @@ def fetch_coach_history() -> pd.DataFrame:
             continue
         try:
             frames.append(_fetch_club_table(club, club_id))
-        except Exception as exc:  # noqa: BLE001 -- best-effort scraper, log and move on
+        except Exception as exc:  # best-effort scraper, log and move on
             log.error("Failed to parse manager history for %s: %s", club, exc)
             failures.append(club)
 

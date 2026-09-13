@@ -50,8 +50,8 @@ def guard_against_shrinkage(
             f"{max_drop_fraction:.0%} drop, which almost certainly means the fetch "
             f"broke rather than the underlying data actually shrinking."
             + (f" {context}" if context else "")
-            + f" Fix the underlying failure before re-running -- the existing file "
-              f"has been left untouched."
+            + " Fix the underlying failure before re-running -- the existing file "
+              "has been left untouched."
         )
 
 

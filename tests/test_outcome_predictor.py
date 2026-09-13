@@ -26,7 +26,7 @@ def _make_league_frame() -> pd.DataFrame:
     season -- exactly the shape _split expects."""
     seasons = ["1920", "2021", "2122", "2223"]
     rows = []
-    for season, year in zip(seasons, [2019, 2020, 2021, 2022]):
+    for season, year in zip(seasons, [2019, 2020, 2021, 2022], strict=True):
         for week in range(3):
             rows.append({
                 "season": season,

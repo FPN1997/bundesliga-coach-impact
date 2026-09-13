@@ -48,7 +48,12 @@ from xgboost import XGBClassifier
 
 import config
 from src.features import build_feature_table
-from src.outcome_predictor import FORMATION_COLS_ACTUAL, NUMERIC, _build_pipeline, _split
+from src.outcome_predictor import (
+    FORMATION_COLS_ACTUAL,
+    NUMERIC,
+    _build_pipeline,
+    _split,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -124,7 +129,7 @@ def tune_and_evaluate(
     variant: str = "",
     n_trials: int = N_TRIALS,
 ) -> dict:
-    categorical = formation_cols + ["venue"]
+    categorical = [*formation_cols, "venue"]
 
     df = build_feature_table()
     train, test = _split(df)

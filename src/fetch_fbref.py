@@ -58,7 +58,7 @@ def fetch_fbref_matches() -> pd.DataFrame:
     for team in teams:
         try:
             df = fbref.read_team_match_stats(stat_type="schedule", team=team)
-        except Exception as exc:  # noqa: BLE001 -- one bad team shouldn't kill the run
+        except Exception as exc:  # one bad team shouldn't kill the run
             log.error("Failed to fetch schedule for %s: %s", team, exc)
             continue
         df = df.reset_index()

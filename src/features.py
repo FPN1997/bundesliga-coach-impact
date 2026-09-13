@@ -112,7 +112,7 @@ def _attach_coach_tenure(df: pd.DataFrame) -> pd.DataFrame:
     # match date rather than joining ambiguously.
     df = df.sort_values("date")
     tenure_starts = []
-    for team, coach, match_date in zip(df["team"], df["coach"], df["date"]):
+    for team, coach, match_date in zip(df["team"], df["coach"], df["date"], strict=True):
         candidates = coaches[(coaches["team"] == team) & (coaches["coach"] == coach)
                               & (coaches["start_date"] <= match_date)]
         tenure_starts.append(candidates["start_date"].max() if not candidates.empty else pd.NaT)
@@ -138,8 +138,8 @@ def build_feature_table() -> pd.DataFrame:
     # recent_formation rides along with the other shift-safe stats here --
     # it's computed the same way (leak-safe, per-team) and needs the same
     # opponent-side join.
-    join_cols = form_cols + ["recent_formation"]
-    opp_side = featured[["date", "team"] + join_cols].rename(
+    join_cols = [*form_cols, "recent_formation"]
+    opp_side = featured[["date", "team", *join_cols]].rename(
         columns={"team": "opponent", **{c: f"opp_{c}" for c in join_cols}}
     )
     featured = featured.merge(opp_side, on=["date", "opponent"], how="left")

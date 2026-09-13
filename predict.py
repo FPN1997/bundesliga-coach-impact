@@ -44,8 +44,8 @@ import joblib
 import pandas as pd
 
 import config
-from src.formation_utils import clean_formation
 from src.features import _rolling_mode
+from src.formation_utils import clean_formation
 
 ROLLING_WINDOW = config.FEATURE_ROLLING_WINDOW
 
@@ -188,13 +188,13 @@ def predict(
 
     X = pd.DataFrame([row])
     proba = pipe.predict_proba(X)[0]
-    probs = dict(zip(le.classes_, proba))
+    probs = dict(zip(le.classes_, proba, strict=True))
 
     print(f"\n{team} (home={venue=='home'}) vs {opponent}")
     print(f"Model: {model_name} ({variant}"
           f"{', ' + tuning + '-tuned' if tuning != 'none' else ', untuned'})\n")
     for label, name in [("W", f"{team} win"), ("D", "Draw"), ("L", f"{opponent} win")]:
-        bar = "#" * int(round(probs.get(label, 0) * 40))
+        bar = "#" * round(probs.get(label, 0) * 40)
         print(f"  {name:16s} {probs.get(label, 0):5.1%}  {bar}")
 
     print(f"\n{team} form: PPG(last {ROLLING_WINDOW})={team_state['form_ppg']:.2f}  "

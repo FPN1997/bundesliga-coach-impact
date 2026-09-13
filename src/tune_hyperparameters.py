@@ -47,7 +47,12 @@ from xgboost import XGBClassifier
 
 import config
 from src.features import build_feature_table
-from src.outcome_predictor import FORMATION_COLS_ACTUAL, NUMERIC, _build_pipeline, _split
+from src.outcome_predictor import (
+    FORMATION_COLS_ACTUAL,
+    NUMERIC,
+    _build_pipeline,
+    _split,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -85,7 +90,7 @@ def tune_and_evaluate(
     e.g. "_prematch" when formation_cols=FORMATION_COLS_PREMATCH. Empty
     string (default) reproduces the original actual-formation tuning run,
     same "<model>_tuned" keys as before this parameter existed."""
-    categorical = formation_cols + ["venue"]
+    categorical = [*formation_cols, "venue"]
 
     df = build_feature_table()
     train, test = _split(df)
