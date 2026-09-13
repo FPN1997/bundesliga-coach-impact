@@ -77,6 +77,24 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+On macOS, XGBoost also needs the OpenMP runtime, which isn't installed by
+default (not on a fresh dev machine, and not on GitHub's `macos-latest`
+Actions runners either — `.github/workflows/ci.yml`'s lockfile job hits
+the exact same thing):
+
+```bash
+brew install libomp
+```
+
+Skipping this produces `XGBoostError: Library not loaded: @rpath/libomp.dylib`
+the first time anything imports `xgboost`, not at install time — easy to
+miss until you actually run something.
+
+Prefer an exact-reproducible install instead? Use
+`pip install -r requirements-lock.txt` (a `pip freeze` from a known-working
+environment) in place of the `requirements.txt` line above — see that
+file's header comment for when to regenerate it.
+
 FBref access goes through a headless Chrome driver under the hood
 (`soccerdata` uses `seleniumbase`) — the first run downloads a matching
 `chromedriver` automatically.
@@ -145,7 +163,14 @@ python run_tune_optuna.py            # actual-formation variant
 python run_tune_optuna_prematch.py   # pre-match variant
 ```
 
-All seven scripts append to the same `outputs/outcome_model_metrics.json`
+...or test XGBoost's native categorical split support against the one-hot
+baseline (see [below](#xgboost-native-categorical-support)):
+
+```bash
+python run_xgboost_native_categorical.py
+```
+
+All eight scripts append to the same `outputs/outcome_model_metrics.json`
 rather than overwriting each other, so results from every run you've done
 stay visible side by side.
 
@@ -473,6 +498,38 @@ defaults picked by hand. All twelve model files (untuned/`_tuned`/`_optuna`
 × 2 formations × 2 model types) save separately under `outputs/models/`
 rather than overwriting each other.
 
+### XGBoost native categorical support
+
+One more lever, tried and documented rather than left as a guess: XGBoost
+2.0+ can split directly on categorical values (`enable_categorical=True` +
+pandas `category` dtype) instead of one-hot encoding them. The theory —
+one-hot encoding ~19 formation categories creates a lot of sparse binary
+columns a boosted tree has to reconstruct a categorical split from across
+several splits, where native support partitions the categories in one —
+was plausible enough to actually test (`run_xgboost_native_categorical.py`),
+holding every hyperparameter identical to the untuned one-hot baseline so
+the encoding is the only thing that changes:
+
+| | One-hot (baseline) | Native categorical |
+|---|---|---|
+| XGBoost, actual | **0.489** | 0.435 |
+| XGBoost, pre-match | **0.467** | 0.456 |
+
+*(macro F1 on the real held-out test set)*
+
+**One-hot wins both, clearly on actual-formation.** The plausible
+explanation is the mirror image of the theory that motivated trying this:
+at `max_depth=4` (the baseline's depth, held fixed for a fair comparison),
+one-hot gives each formation its own independent split threshold in a
+single level of the tree, while a native categorical split has to
+partition all ~19 categories into two groups per split — reaching
+one-hot's effective resolution needs more depth than this comparison
+allowed. Native categorical support is generally pitched at *much* higher
+cardinality (hundreds/thousands of categories, where one-hot's column
+explosion is the real problem) — 19 is apparently not where it pays off,
+at least not at this tree depth. Not wired into `predict.py`, since it's
+a clear loss rather than a close call worth keeping both options for.
+
 ## Configuration
 
 Everything tunable lives in `config.py`:
@@ -575,9 +632,9 @@ Everything tunable lives in `config.py`:
   `test_features.py`) are. A test asserting `current_team_state` on a
   small synthetic team matches hand-computed rolling stats over that
   team's last N matches would close that gap directly.
-- XGBoost still one-hot-encodes formations via `OneHotEncoder` in the
-  shared `ColumnTransformer`. XGBoost 2.0+ supports native categorical
-  splits (`enable_categorical=True` + pandas `category` dtype), which
-  handles a categorical this high-cardinality more natively — untried, and
-  plausible given XGBoost is the model that never improved under any
-  tuning method tried so far.
+- XGBoost's native categorical split support lost clearly to one-hot at
+  the baseline's `max_depth=4` (see "XGBoost native categorical support"
+  above) — worth retrying at a greater max_depth specifically for the
+  categorical variant, since the working theory for why it lost is that
+  it needs more depth to reach one-hot's effective resolution, not that
+  categorical splits are inherently worse here.

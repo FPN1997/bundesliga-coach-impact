@@ -63,6 +63,14 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      # XGBoost needs the OpenMP runtime on macOS and GitHub's macOS
+      # runners don't ship it by default -- see README "Setup" for the
+      # same requirement on a local dev machine (found the hard way: it
+      # fails at import time, not install time, so this job caught it
+      # missing here before it was even documented for local setup).
+      - name: Install libomp (XGBoost dependency on macOS)
+        run: brew install libomp
+
       - name: Install from lockfile
         run: |
           python -m pip install --upgrade pip
