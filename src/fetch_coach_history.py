@@ -5,11 +5,22 @@ club's "Trainerhistorie" (manager history) page on Transfermarkt.
 Wikipedia was the original plan here -- English Wikipedia turned out not to
 have "List of <club> managers" pages for Bundesliga clubs (verified live:
 every guessed URL 404'd), so this scrapes Transfermarkt directly instead.
-That turned out to be straightforward: a normal browser User-Agent gets a
-200 (no login/JS challenge), and the URL only cares about the numeric club
-ID -- config.CLUB_TRANSFERMARKT_ID -- the slug text in the URL is cosmetic.
+That worked cleanly at first (a normal browser User-Agent got a 200, no
+login/JS challenge), and the URL only cares about the numeric club ID --
+config.CLUB_TRANSFERMARKT_ID -- the slug text in the URL is cosmetic.
 
-  https://www.transfermarkt.com/<any-slug>/mitarbeiterhistorie/verein/<id>/plus/1
+  https://www.transfermarkt.de/<any-slug>/mitarbeiterhistorie/verein/<id>/plus/1
+
+**Domain note, found live**: `.com` started returning an AWS WAF
+"challenge" response (HTTP 202, empty body, `x-amzn-waf-action: challenge`)
+for every request -- including the plain homepage, so not something
+rate-limiting or a smarter User-Agent fixes -- a few days after this was
+first built and working. `.de` was verified live to still serve the exact
+same page (same "items" table, same club IDs, dates as DD.MM.YYYY instead
+of DD/MM/YYYY -- `dateutil` handles both) with no challenge, so that's what
+this hits now. If `.de` ever starts getting challenged too, that's the
+first thing to check again -- Transfermarkt's bot-detection is evidently
+still evolving, not a one-time fix.
 
 Verified live against Bayern Munich (id 27) and Heidenheim (id 2036): the
 page's <title> is used as a sanity check that the ID actually points at the
@@ -21,6 +32,17 @@ data/coach_history_manual.csv is consulted too and overrides/augments
 whatever this scraper produces -- use it for any club missing an ID below,
 or to patch a spell the table got wrong (very short caretaker spells are
 the likeliest thing to look odd).
+
+**Resilience note**: if most/all clubs fail to fetch (e.g. the domain gets
+blocked again), this refuses to overwrite an existing, larger
+coach_history.csv with the near-empty result -- see the check at the end
+of fetch_coach_history(). That happened once already: a fully-blocked run
+silently wrote a 1-row file (just the manual CSV fallback) over what had
+been ~1600 real rows, which then broke coach_impact.py's before/after
+windows and everything built on it. The guard trades "always write
+something" for "never silently regress" -- exactly the failure mode this
+script needs to be paranoid about, since it degrades gracefully-looking
+(a warning, not a crash) all the way to a badly wrong downstream dataset.
 """
 
 from __future__ import annotations
@@ -66,10 +88,18 @@ def _parse_date(value: str) -> pd.Timestamp | None:
 
 
 def _fetch_club_table(club: str, club_id: int) -> pd.DataFrame:
-    url = f"https://www.transfermarkt.com/verein/mitarbeiterhistorie/verein/{club_id}/plus/1"
+    url = f"https://www.transfermarkt.de/verein/mitarbeiterhistorie/verein/{club_id}/plus/1"
     log.info("Fetching manager history for %s (Transfermarkt id %d)", club, club_id)
     resp = requests.get(url, headers=HEADERS, timeout=20)
     resp.raise_for_status()
+    if not resp.text.strip():
+        # A 200/202 with an empty body is Transfermarkt's WAF challenge
+        # response, not "no data" -- distinguish it from a genuinely missing
+        # table so the log points at the right fix (see module docstring).
+        waf = resp.headers.get("x-amzn-waf-action")
+        raise ValueError(f"Empty response body from {url}"
+                          + (f" (x-amzn-waf-action: {waf} -- likely bot-blocked, "
+                             f"not a real 'no data' response)" if waf else ""))
 
     cache_path = Path(config.RAW_DIR) / f"transfermarkt_{club.replace(' ', '_')}.html"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +192,30 @@ def fetch_coach_history() -> pd.DataFrame:
 
     out_path = Path(config.COACH_HISTORY_RESOLVED_CSV)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Refuse to silently regress: if this run produced far fewer rows than
+    # what's already on disk, something broke at the source (a domain-wide
+    # block, most clubs' pages changing shape, ...) rather than the data
+    # actually shrinking -- Bundesliga coaching history doesn't lose rows
+    # over time. Overwriting anyway would feed a near-empty coach table
+    # into build_dataset.py, which fails quietly (a logged warning, not a
+    # crash) all the way down to coach_impact.py finding zero valid
+    # before/after windows. This is exactly the failure this project hit
+    # once already (see module docstring).
+    if out_path.exists():
+        existing_count = sum(1 for _ in out_path.open()) - 1  # minus header
+        if existing_count > 20 and len(combined) < existing_count * 0.5:
+            raise RuntimeError(
+                f"Refusing to overwrite {out_path} ({existing_count} rows) with "
+                f"this run's result ({len(combined)} rows) -- that's a >50% drop, "
+                f"which almost certainly means the scraper broke (e.g. Transfermarkt "
+                f"blocking requests again) rather than coaching history actually "
+                f"shrinking. {len(failures)}/{len(config.CLUB_TRANSFERMARKT_ID)} clubs "
+                f"failed this run: {failures}. Fix the underlying fetch failure (check "
+                f"the ERROR log lines above) before re-running -- the existing file "
+                f"has been left untouched."
+            )
+
     combined.to_csv(out_path, index=False)
     log.info("Saved %d resolved coach-tenure rows to %s", len(combined), out_path)
 
