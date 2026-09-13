@@ -17,6 +17,9 @@ of each match attached, then:
    classifiers predicting win/draw/loss from formations plus rolling form,
    xG, PPDA, and coach tenure, evaluated on a strict time-based holdout
    (see [below](#formation-aware-outcome-predictor)).
+5. **`predict.py`** — a CLI that actually uses the trained models: give it
+   two team names and it computes each team's current form itself and
+   prints a win/draw/loss prediction (see [below](#predicting-a-match)).
 
 ![Formation matchup heatmap — average points won per game for every (team formation, opponent formation) pairing across 8 Bundesliga seasons](docs/formation_matchup_heatmap.png)
 
@@ -44,6 +47,22 @@ Treat `data/coach_history_manual.csv` as the correction file: it
 overrides/augments whatever the scraper produces, and is where you fill in
 any club with no id in `config.CLUB_TRANSFERMARKT_ID` (logged clearly when
 that happens) or patch a spell it got wrong.
+
+**Update, found live a few days after the above was working fine**:
+`transfermarkt.com` started returning an AWS WAF "challenge" response (HTTP
+202, empty body) to every request — including the plain homepage, so not
+something a better User-Agent or a delay fixes. `transfermarkt.de` was
+verified live to still serve the identical page with no challenge, so
+`src/fetch_coach_history.py` now hits `.de`. Bot-detection on scraping
+targets is evidently something that changes under you, not a one-time
+solve — worth remembering if this breaks again later. A resilience guard
+was added at the same time: `fetch_coach_history()` now refuses to
+overwrite an existing, larger `coach_history.csv` with a much smaller
+result (see its docstring), because this exact failure silently wrote a
+1-row file over ~1600 real rows the first time it happened, which broke
+coach assignment for 98% of matches without a single crash anywhere in the
+chain — a warning log, not an error, all the way down to
+`coach_impact.py` quietly finding zero valid coaching changes.
 
 ## Setup
 
@@ -129,6 +148,84 @@ python run_tune_optuna_prematch.py   # pre-match variant
 All seven scripts append to the same `outputs/outcome_model_metrics.json`
 rather than overwriting each other, so results from every run you've done
 stay visible side by side.
+
+## Predicting a match
+
+Everything above trains and evaluates models; `predict.py` is the piece
+that actually uses one:
+
+```bash
+python predict.py --list-teams
+python predict.py --team "Bayern Munich" --opponent Dortmund --venue home
+```
+
+```
+Bayern Munich (home=True) vs Dortmund
+Model: random_forest (prematch, grid-tuned)
+
+  Bayern Munich win 30.8%  ############
+  Draw             34.9%  ##############
+  Dortmund win     34.3%  ##############
+
+Bayern Munich form: PPG(last 5)=2.20  season PPG=2.00  coach=Vincent Kompany (804d)  recent formation=4-2-3-1  (as of 2026-09-05)
+Dortmund form: PPG(last 5)=3.00  season PPG=3.00  coach=Niko Kovac (588d)  recent formation=3-4-3  (as of 2026-09-12)
+```
+
+It computes each team's *current* form directly from
+`data/processed/match_dataset.parquet` and `coach_history.csv` — the same
+feature definitions `src/features.py` uses for training, just evaluated as
+of right now instead of shifted away from a specific past match (there's
+no "next match" row in historical data to attach features to; the rolling
+window is simply the team's actual most recent matches). Defaults to the
+strongest pre-match-legal model (GridSearchCV-tuned Random Forest on
+recent-formation).
+
+Pass both `--formation` and `--opp-formation` to switch to explanatory
+mode instead (defaults to untuned XGBoost) — answers "what does the model
+think GIVEN these formations," not a genuine forecast, since you don't
+know the opponent's actual matchday formation in advance:
+
+```bash
+python predict.py --team "Bayern Munich" --opponent Dortmund --venue home \
+    --formation 4-2-3-1 --opp-formation 4-3-3
+```
+
+`--model {random_forest,xgboost}` and `--tuning {none,grid,optuna}`
+override which of the twelve saved model files gets used, if you want to
+compare them directly on the same matchup. Typos in `--team`/`--opponent`
+get a "did you mean" suggestion rather than a bare KeyError.
+
+## Testing
+
+```bash
+python -m pytest tests/
+```
+
+Covers the two properties this project actually depends on being correct,
+neither of which a wrong answer would necessarily *look* wrong:
+
+- **Leak-safety** (`tests/test_features.py`) — every rolling/cumulative
+  feature must depend only on strictly-prior matches. Verified by hand-
+  computing expected values on small synthetic teams and asserting exact
+  agreement, plus one test that deliberately checks two teams' histories
+  don't blend together. To confirm these tests actually have teeth (not
+  just checking their own assumptions), a `.shift(1)` was temporarily
+  removed from the source during development and confirmed the affected
+  test failed loudly — then restored.
+- **Time-based splitting** (`tests/test_outcome_predictor.py`) — the
+  train/test split must never let a test-set row's date precede a
+  training-set row's date, and must raise loudly rather than silently
+  evaluate on an empty set if `config.TEST_SEASONS` ever drifts out of
+  sync with the data (exactly what happened once during development).
+- **The coach-history overwrite guard** (`tests/test_fetch_coach_history.py`)
+  — a direct regression test for the Transfermarkt-blocking incident
+  described above: simulates every club's fetch failing and asserts the
+  existing good file survives untouched rather than being silently
+  replaced by a near-empty one.
+
+All tests use small synthetic data, not the live scraped dataset — no
+network access needed to run them, and they don't depend on however much
+data happens to be sitting in `data/` on a given machine.
 
 ## Formation-aware outcome predictor
 
@@ -405,3 +502,19 @@ Everything tunable lives in `config.py`:
   win/draw/loss (classification) — draws are inherently the hardest class
   here, and a lot of that difficulty may just wash out with a continuous
   target.
+- No CI. The test suite (`tests/`) needs to be run by hand; a minimal
+  GitHub Actions workflow (checkout, install, `pytest tests/`) would catch
+  a regression on every push instead of whenever someone remembers to run
+  it locally.
+- `predict.py`'s `current_team_state()` — the "as of right now" feature
+  computation — isn't itself unit-tested, only the underlying pieces it's
+  built from (`_rolling_mode`, the leak-safe rolling logic in
+  `test_features.py`) are. A test asserting `current_team_state` on a
+  small synthetic team matches hand-computed rolling stats over that
+  team's last N matches would close that gap directly.
+- XGBoost still one-hot-encodes formations via `OneHotEncoder` in the
+  shared `ColumnTransformer`. XGBoost 2.0+ supports native categorical
+  splits (`enable_categorical=True` + pandas `category` dtype), which
+  handles a categorical this high-cardinality more natively — untried, and
+  plausible given XGBoost is the model that never improved under any
+  tuning method tried so far.
