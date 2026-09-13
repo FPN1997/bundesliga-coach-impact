@@ -149,6 +149,60 @@ All seven scripts append to the same `outputs/outcome_model_metrics.json`
 rather than overwriting each other, so results from every run you've done
 stay visible side by side.
 
+## Automated weekly refresh
+
+`scripts/weekly_refresh.sh` reruns `run_pipeline.py` (FBref/Understat/
+Transfermarkt fetch → merge → coach-impact and formation analysis) and
+logs the result to `logs/refresh_<timestamp>.log` (last ~12 kept). It's
+scheduled via **`launchd`, not `cron`** — deliberately: `cron` simply skips
+a job entirely if the Mac is asleep or off at the scheduled time, while
+`launchd`'s `StartCalendarInterval` evaluates missed schedules on wake and
+login and runs them then instead. Not a hard real-time guarantee (it's "as
+soon as launchd notices," not instantaneous), but a real, documented
+difference from `cron` that matters a lot for a laptop that sleeps.
+
+Install (every Monday 06:00, catching the weekend's matches; edit the
+`Weekday`/`Hour`/`Minute` in the plist first if you want a different time):
+
+```bash
+cp scripts/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh.plist \
+   ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) \
+   ~/Library/LaunchAgents/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh.plist
+```
+
+Check it's loaded and see when it last ran:
+
+```bash
+launchctl print gui/$(id -u)/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh
+```
+
+Uninstall:
+
+```bash
+launchctl bootout gui/$(id -u)/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh
+rm ~/Library/LaunchAgents/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh.plist
+```
+
+**Known limitations, honestly:**
+- Only catches up on a *missed schedule*, not a fully powered-off Mac that
+  stays off past when it would next check — it still needs to actually
+  boot and have you logged in at some point for the catch-up to fire.
+- Nothing notifies you of a failure. `logs/launchd_stderr.log` and the
+  latest `logs/refresh_*.log` (which explicitly logs `FAILED (exit N)`
+  rather than a misleading "finished OK" if `run_pipeline.py` errors) are
+  the only records — check them occasionally, or wire up a real
+  notification (e.g. `osascript -e 'display notification ...'` on failure,
+  or an email) if silent failures are a real concern for how you're using
+  this.
+- The `coach_history.csv` overwrite guard (see "Data sources" above)
+  protects against Transfermarkt blocking requests again, but if FBref or
+  Understat change shape instead, `weekly_refresh.sh` doesn't have an
+  equivalent guard for those — a bad run there could still write a
+  degraded `match_dataset.parquet` silently. Worth adding the same
+  "refuse to shrink drastically" pattern there if this runs unattended for
+  a long stretch.
+
 ## Predicting a match
 
 Everything above trains and evaluates models; `predict.py` is the piece

@@ -5,4 +5,5 @@ downloaded_files/
 data/raw/
 data/processed/
 outputs/
+logs/
 .DS_Store

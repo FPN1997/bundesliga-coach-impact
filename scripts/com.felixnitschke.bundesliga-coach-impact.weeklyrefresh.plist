@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.felixnitschke.bundesliga-coach-impact.weeklyrefresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/scripts/weekly_refresh.sh</string>
+    </array>
+
+    <!-- Every Monday at 06:00. Unlike cron, launchd evaluates this on wake
+         and login too -- if the Mac was asleep or off at the scheduled
+         time, it runs the missed job as soon as the system is next
+         available, rather than skipping it for the week. Not a hard
+         real-time guarantee (it's "as soon as launchd notices", typically
+         within moments of wake/login, not instantaneous), but a real and
+         well-documented difference from cron, which never catches up. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Deliberately NOT set to true: that would rerun the pipeline every
+         time this agent (re)loads -- at login, after `launchctl bootstrap`,
+         after a plist edit -- not just on the weekly schedule. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Safety net alongside weekly_refresh.sh's own logging to logs/ --
+         catches anything printed before that redirection takes effect, or
+         if the script fails to start at all (e.g. a bad path in this
+         plist). -->
+    <key>StandardOutPath</key>
+    <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/logs/launchd_stderr.log</string>
+</dict>
+</plist>
