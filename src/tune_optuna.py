@@ -54,7 +54,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # trial-by-trial spam off; we log the summary
 
-N_CV_SPLITS = 5
+N_CV_SPLITS = config.N_CV_SPLITS
 N_TRIALS = 50
 
 

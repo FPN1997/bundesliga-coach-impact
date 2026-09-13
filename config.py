@@ -154,3 +154,14 @@ FEATURE_ROLLING_WINDOW = 5
 TEST_SEASONS = ["2025-2026", "2026-2027"]
 
 MODEL_DIR = "outputs/models"
+
+# CV folds for src/tune_hyperparameters.py and src/tune_optuna.py's
+# TimeSeriesSplit. Verified live (see README "Hyperparameter tuning"):
+# sklearn's TimeSeriesSplit(n_splits=N) divides the training set into N+1
+# equal-size chunks, so RAISING N shrinks every fold's chunk size,
+# including the earliest, already-data-starved training fold -- it is NOT
+# simply "more folds at the same size." Whether more, smaller folds average
+# out to a better or worse (noisier) CV signal than fewer, larger ones is
+# an empirical question, not something to assume either way -- which is
+# exactly why this got tested rather than just bumped and left undocumented.
+N_CV_SPLITS = 10

@@ -238,79 +238,80 @@ matches from *after* the ones it validates against within the same fold,
 reintroducing the exact leakage the outer train/test split already guards
 against, just one level down. Grid: `n_estimators`/`max_depth`/
 `min_samples_leaf` for the forest, plus `learning_rate`/`subsample` for
-XGBoost (12 and 16 combinations respectively, x5 CV folds each). Works
-against either formation variant (`run_tune_hyperparameters.py` for
-actual-formation, `run_tune_prematch.py` for the pre-match one).
+XGBoost (12 and 16 combinations respectively). Works against either
+formation variant (`run_tune_hyperparameters.py` for actual-formation,
+`run_tune_prematch.py` for the pre-match one). `config.N_CV_SPLITS`
+controls the fold count (currently 10 — see below for why that number and
+not something else).
 
-Honest result, now run against **both** formation variants: **tuning
-didn't help, and slightly hurt every single model** on the real held-out
-test set — 4 for 4 — despite finding better configurations by CV score
-during the search itself every time:
+**First pass, 5 folds**: tuning made every single model worse — 4 for 4 —
+despite finding better configurations by CV score during the search every
+time. The CV scores (0.41-0.44) sat well below the eventual test scores
+(0.46-0.49), pointing at `TimeSeriesSplit`'s early folds (very little
+training data) being a noisier optimization target than the final
+602-match holdout.
 
-| | CV macro-F1 (search) | Test accuracy | Test macro F1 |
+**Fixing that meant actually checking what raising `n_splits` does, not
+assuming "more folds" helps by default.** sklearn's `TimeSeriesSplit(n_splits=N)`
+divides the training set into `N+1` equal chunks — raising `N` shrinks
+*every* chunk, including the earliest, already-data-starved one:
+
+```
+n_splits=5:  fold 0 train=568  fold 4 train=2824  (test=564 every fold)
+n_splits=10: fold 0 train=308  fold 9 train=3080  (test=308 every fold)
+```
+
+So doubling the fold count could easily have made the noisy-early-fold
+problem worse, not better — it was an empirical question, not a safe
+assumption, which is why it got tested rather than just bumped. Verified
+live before committing to a full run.
+
+**Result at 10 folds — genuinely different, and more interesting than
+either "tuning never helps" or "more folds fixes everything":**
+
+| | Untuned | GridSearchCV (10-fold) | Optuna, 50 trials (10-fold) |
 |---|---|---|---|
-| Random Forest, actual (untuned) | — | 47.8% | 0.464 |
-| Random Forest, actual (tuned) | 0.435 | 48.0% | 0.462 |
-| XGBoost, actual (untuned) | — | 49.7% | **0.489** |
-| XGBoost, actual (tuned) | 0.411 | 49.2% | 0.476 |
-| Random Forest, pre-match (untuned) | — | 49.3% | 0.481 |
-| Random Forest, pre-match (tuned) | 0.438 | 48.7% | 0.475 |
-| XGBoost, pre-match (untuned) | — | 47.8% | 0.467 |
-| XGBoost, pre-match (tuned) | 0.409 | 47.3% | 0.459 |
-
-The gap between the tuned configs' CV scores (0.41-0.44) and their eventual
-test scores (0.46-0.49) is the tell, and it shows up identically in all 4
-runs: `TimeSeriesSplit`'s early folds train on very little data and are
-noisier than the final full-training-set + 602-match holdout evaluation, so
-the search is optimizing against a shakier signal than the number it's
-ultimately judged on. That this reproduces across both formation variants
-(4 independent tuning runs, not 2) is stronger evidence for "the CV setup
-is the limiting factor here" than any one of them alone — with a dataset
-this size (3,388 training matches) and hand-picked starting hyperparameters
-that were already reasonable, there wasn't much on the table for tuning to
-find, and reporting that honestly across the board is more useful than
-re-running grids until a lucky seed looks better. The untuned models remain
-the ones actually worth using — XGBoost/actual-formation as the explanatory
-model, Random Forest/pre-match as the pre-kickoff-legal one. Tuned models
-save to `outputs/models/*_tuned.joblib` alongside the untuned ones rather
-than replacing them, so all of them are there to compare.
-
-#### Wider search with Optuna
-
-`src/tune_optuna.py` goes well beyond the GridSearchCV grid: 9 hyperparameters
-for the forest instead of 3 (`n_estimators`, `max_depth`, `min_samples_leaf`,
-`min_samples_split`, `max_features`, `criterion`), continuous log-scale
-ranges instead of 2-3 fixed values for XGBoost's `learning_rate`/`subsample`/
-`colsample_bytree`/`gamma`/`reg_alpha`/`reg_lambda`, and TPE (Bayesian)
-sampling instead of exhaustive enumeration so 50 trials can actually cover
-that space (`run_tune_optuna.py`, `run_tune_optuna_prematch.py`). Same
-`TimeSeriesSplit` CV underneath, for a fair comparison against both the
-untuned and GridSearchCV numbers:
-
-| | Untuned | GridSearchCV | Optuna (50 trials) |
-|---|---|---|---|
-| Random Forest, actual | **0.464** | 0.462 | 0.460 |
-| XGBoost, actual | **0.489** | 0.476 | 0.477 |
-| Random Forest, pre-match | **0.481** | 0.475 | 0.469 |
-| XGBoost, pre-match | **0.467** | 0.459 | 0.465 |
+| Random Forest, actual | 0.464 | **0.481** | 0.475 |
+| XGBoost, actual | **0.489** | 0.485 | 0.451 |
+| Random Forest, pre-match | 0.481 | **0.481** | 0.465 |
+| XGBoost, pre-match | **0.467** | 0.460 | 0.452 |
 
 *(macro F1 on the real held-out test set; bold = best per row)*
 
-**Untuned wins all 4 rows, across two different search strategies.** Optuna
-did find marginally better cross-validation scores than GridSearchCV every
-time (e.g. actual-formation Random Forest: CV macro-F1 0.441 vs. 0.435) —
-the wider space and smarter sampler are doing their job — but that
-didn't translate into a better *test* score in 3 of 4 cases either (Optuna
-beat GridSearchCV on the real test set only for the two XGBoost rows, by
-0.001-0.006, both still below untuned). This is the same CV-vs-test gap
-from the GridSearchCV section, just confirmed a second way: the problem
-was never "the grid wasn't wide enough," it's that `TimeSeriesSplit`'s
-early, data-starved folds are a noisier optimization target than the
-final large evaluation, and no amount of extra search coverage fixes a
-noisy target — it just finds sharper ways to overfit to the noise. Fixing
-it for real would mean addressing the CV signal itself (more folds, a
-purged/embargoed CV variant, or simply more historical seasons of data),
-not searching harder over the same one.
+More folds **genuinely helped Random Forest** — it now beats untuned on
+actual-formation (+0.017) and ties it on pre-match, a real reversal from
+the 5-fold result. **XGBoost still doesn't beat untuned in either
+variant**, though the gap narrowed on actual-formation (0.485 vs. the
+5-fold tuned run's 0.476). Model-dependent, not a uniform fix — which
+tracks with the earlier formation-variant finding that Random Forest and
+XGBoost don't respond to changes the same way on this dataset.
+
+**Optuna's wider search got worse with more folds, not better** — this is
+the one genuinely surprising result. Actual-formation XGBoost's CV score
+during the Optuna search *improved* over GridSearchCV's (0.406 vs. 0.394),
+but its test score *dropped hard* (0.451 vs. 0.485) — a clean, direct
+demonstration of overfitting to a noisy CV signal: given more trials and a
+wider space to search against the same imperfect target, TPE sampling
+found a sharper way to fit that target's noise, not a genuinely better
+model. This happened in 3 of 4 rows (Optuna underperforms GridSearchCV
+everywhere except it's a close call nowhere) — wider search made things
+worse here, a useful caution against reflexively reaching for "more trials"
+as a fix.
+
+**Bottom line**: the CV-vs-test gap was worth addressing, but "more folds"
+wasn't a blanket fix — it helped the model prone to overfitting rare
+categorical splits (Random Forest) and did nothing for the one whose
+regularization was already handling that reasonably well (XGBoost), and
+it made the wider/smarter search *more* prone to chasing CV noise, not
+less. The two models actually worth using update slightly: **XGBoost on
+actual formation (untuned, 0.489)** remains the best explanatory model,
+and **GridSearchCV-tuned Random Forest is now the strongest pre-match
+option** — tied with untuned on pre-match-only data (0.481) but clearly
+ahead on actual-formation (0.481 vs 0.464), and unlike the untuned model,
+its hyperparameters are a documented, reproducible choice rather than
+defaults picked by hand. All twelve model files (untuned/`_tuned`/`_optuna`
+× 2 formations × 2 model types) save separately under `outputs/models/`
+rather than overwriting each other.
 
 ## Configuration
 
@@ -391,12 +392,15 @@ Everything tunable lives in `config.py`:
   formation profile — slots in as a model trained on
   `outputs/coach_impact_rankings.csv` plus a coach-history feature table
   built from `coach_preferred_formations.csv`.
-- Both `GridSearchCV` and a much wider `Optuna` search underperformed the
-  untuned defaults, consistently, across both formation variants (see
-  "Wider search with Optuna" above) — the actual lever left to pull is the
-  CV signal itself, not more search: more `TimeSeriesSplit` folds, a
-  purged/embargoed CV variant, or just more historical seasons of data
-  once they exist.
+- Raising `TimeSeriesSplit` folds (see "Hyperparameter tuning" above) fixed
+  the CV-vs-test gap for Random Forest but not XGBoost — a purged/embargoed
+  CV variant (drop a small gap between each fold's train/test boundary) or
+  simply more historical seasons of data are the remaining untried levers
+  for XGBoost specifically.
+- Optuna got *more* prone to overfitting the CV signal at 10 folds, not
+  less — worth understanding whether a narrower, more targeted search
+  space (informed by which hyperparameters the GridSearchCV winners share)
+  does better than TPE's free rein over 9 dimensions at once.
 - Try target = expected points / goal difference (regression) instead of
   win/draw/loss (classification) — draws are inherently the hardest class
   here, and a lot of that difficulty may just wash out with a continuous

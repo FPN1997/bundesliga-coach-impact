@@ -52,7 +52,7 @@ from src.outcome_predictor import FORMATION_COLS_ACTUAL, NUMERIC, _build_pipelin
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-N_CV_SPLITS = 5
+N_CV_SPLITS = config.N_CV_SPLITS
 
 RF_PARAM_GRID = {
     "model__n_estimators": [200, 400],
