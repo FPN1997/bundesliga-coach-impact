@@ -33,6 +33,21 @@ whatever this scraper produces -- use it for any club missing an ID below,
 or to patch a spell the table got wrong (very short caretaker spells are
 the likeliest thing to look odd).
 
+**Auto-resolution**: every time `config.SEASONS` widened or a season
+turned over, a newly-promoted or newly-in-scope club needed a hand-added
+`config.CLUB_TRANSFERMARKT_ID` entry -- this happened three separate
+times before this existed. Now, a team with no configured id gets looked
+up live via `src.transfermarkt_search.search_club_id` (Transfermarkt's own
+search), verified strictly (a title mismatch REJECTS the guess here,
+unlike the lenient warn-only check for a human-configured id below), and
+cached to `data/club_transfermarkt_ids_auto.json` so it's a one-time cost
+per club rather than a recurring one. Validated against all ids already
+known to be correct in `config.CLUB_TRANSFERMARKT_ID` before trusting it
+(12/12 -- see the git history for this file). A club search/verification
+still comes up empty sometimes (an unusual name, an ambiguous search) --
+that still falls back to needing a manual CSV entry, just for a much
+smaller set of cases than "every single new club."
+
 **Resilience note**: if most/all clubs fail to fetch (e.g. the domain gets
 blocked again), this refuses to overwrite an existing, larger
 coach_history.csv with the near-empty result -- via the shared
@@ -49,6 +64,7 @@ the way to a badly wrong downstream dataset.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -60,6 +76,7 @@ from dateutil import parser as dateparser
 
 import config
 from src.data_guard import existing_csv_row_count, guard_against_shrinkage
+from src.transfermarkt_search import search_club_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -90,7 +107,12 @@ def _parse_date(value: str) -> pd.Timestamp | None:
         return None
 
 
-def _fetch_club_table(club: str, club_id: int) -> pd.DataFrame:
+def _fetch_club_table(club: str, club_id: int, *, strict_title_check: bool = False) -> pd.DataFrame:
+    """strict_title_check: raise on a title mismatch instead of just
+    warning. Used for auto-resolved ids (see search_club_id below), which
+    haven't had a human look at them the way a config.CLUB_TRANSFERMARKT_ID
+    entry has -- a mismatch there means "reject this guess," not "log a
+    note for someone to double check eventually."."""
     url = f"https://www.transfermarkt.de/verein/mitarbeiterhistorie/verein/{club_id}/plus/1"
     log.info("Fetching manager history for %s (Transfermarkt id %d)", club, club_id)
     resp = requests.get(url, headers=HEADERS, timeout=20)
@@ -115,6 +137,9 @@ def _fetch_club_table(club: str, club_id: int) -> pd.DataFrame:
     # the first "significant" token of the club name against the title.
     key_token = club.split()[0].lower()
     if key_token not in title.lower():
+        if strict_title_check:
+            raise ValueError(f"Transfermarkt id {club_id}'s page title ({title!r}) doesn't "
+                              f"match {club!r} -- rejecting auto-resolved id.")
         log.warning("Transfermarkt id %d's page title (%r) doesn't obviously "
                     "match %r -- double check config.CLUB_TRANSFERMARKT_ID[%r].",
                     club_id, title, club, club)
@@ -154,20 +179,70 @@ def _fetch_club_table(club: str, club_id: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+AUTO_RESOLVED_PATH = Path("data/club_transfermarkt_ids_auto.json")
+
+
+def _teams_needing_coach_data() -> list[str]:
+    """Every team to fetch coach history for. Prefers the authoritative,
+    current list from the just-fetched FBref data (fetch_fbref.py always
+    runs before this step in run_pipeline.py) over the static
+    config.CLUB_TRANSFERMARKT_ID keys -- that dict only lists teams
+    someone has already resolved an id for, so iterating IT would never
+    even attempt a genuinely new team, auto-resolvable or not."""
+    fbref_path = Path(config.RAW_DIR) / "fbref_schedule.parquet"
+    if fbref_path.exists():
+        return sorted(pd.read_parquet(fbref_path, columns=["team"])["team"].dropna().unique())
+    log.warning("%s not found -- falling back to config.CLUB_TRANSFERMARKT_ID's team "
+                "list (run fetch_fbref.py first for the current, complete one).", fbref_path)
+    return sorted(config.CLUB_TRANSFERMARKT_ID.keys())
+
+
+def _load_auto_resolved_ids() -> dict[str, int]:
+    if not AUTO_RESOLVED_PATH.exists():
+        return {}
+    return json.loads(AUTO_RESOLVED_PATH.read_text())
+
+
+def _save_auto_resolved_ids(ids: dict[str, int]) -> None:
+    AUTO_RESOLVED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AUTO_RESOLVED_PATH.write_text(json.dumps(dict(sorted(ids.items())), indent=2) + "\n")
+
+
 def fetch_coach_history() -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     failures: list[str] = []
+    auto_resolved = _load_auto_resolved_ids()
+    newly_resolved: dict[str, int] = {}
 
-    for club, club_id in config.CLUB_TRANSFERMARKT_ID.items():
-        if not club_id:
-            log.warning("No Transfermarkt id configured for %s -- add one to "
-                        "config.CLUB_TRANSFERMARKT_ID or use the manual CSV.", club)
-            continue
+    teams = _teams_needing_coach_data()
+    for club in teams:
+        club_id = config.CLUB_TRANSFERMARKT_ID.get(club) or auto_resolved.get(club)
+        auto_resolving = club_id is None
+        if auto_resolving:
+            club_id = search_club_id(club)
+            if club_id is None:
+                log.warning("No Transfermarkt id for %s -- not in config.CLUB_TRANSFERMARKT_ID, "
+                            "not cached, and live search found nothing usable. Add one to "
+                            "config.CLUB_TRANSFERMARKT_ID or the manual CSV.", club)
+                continue
+
         try:
-            frames.append(_fetch_club_table(club, club_id))
+            table = _fetch_club_table(club, club_id, strict_title_check=auto_resolving)
         except Exception as exc:  # best-effort scraper, log and move on
-            log.error("Failed to parse manager history for %s: %s", club, exc)
+            log.error("Failed to %s manager history for %s (id %s): %s",
+                      "verify auto-resolved" if auto_resolving else "parse", club, club_id, exc)
             failures.append(club)
+            continue
+
+        frames.append(table)
+        if auto_resolving:
+            newly_resolved[club] = club_id
+            log.info("Auto-resolved and verified %r -> Transfermarkt id %d "
+                      "(cached in %s for future runs)", club, club_id, AUTO_RESOLVED_PATH)
+
+    if newly_resolved:
+        auto_resolved.update(newly_resolved)
+        _save_auto_resolved_ids(auto_resolved)
 
     tm_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["team", "coach", "start_date", "end_date"]
@@ -200,7 +275,7 @@ def fetch_coach_history() -> pd.DataFrame:
     # the incident that made this necessary (this exact file, once).
     guard_against_shrinkage(
         out_path, existing_csv_row_count(out_path), len(combined),
-        context=(f"{len(failures)}/{len(config.CLUB_TRANSFERMARKT_ID)} clubs failed "
+        context=(f"{len(failures)}/{len(teams)} clubs failed "
                  f"this run: {failures}. Check the ERROR log lines above.")
     )
 

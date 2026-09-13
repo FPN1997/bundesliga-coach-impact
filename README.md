@@ -543,12 +543,15 @@ Everything tunable lives in `config.py`:
   predictor settings: rolling-form window size, which seasons are held out
   for evaluation, where trained models get saved.
 - `CLUB_TRANSFERMARKT_ID` — team name → Transfermarkt numeric club id, used
-  to build that club's manager-history URL. Newly promoted clubs not yet in
-  this dict need their id looked up (see the comment above the dict in
-  `config.py`) or their tenure data entered via the manual CSV instead.
+  to build that club's manager-history URL. A newly promoted club not yet
+  in this dict gets looked up automatically instead (see "Auto-resolution"
+  in `fetch_coach_history.py`'s docstring) — this dict is now the
+  hand-verified, permanent overrides, not the only source.
 - `TEAM_NAME_MAP` — Understat's team names don't match FBref's; this maps
   Understat's spelling to the canonical FBref one used everywhere else.
-  `build_dataset.py` logs any Understat team name it can't map.
+  Same auto-resolution story as `CLUB_TRANSFERMARKT_ID` above (fuzzy match
+  instead of a search, see `src/team_name_matcher.py`) for anything not
+  already in this dict.
 - `IMPACT_WINDOW` — how many matches before/after a coaching change count as
   the "before" and "after" samples (default 8).
 
@@ -576,14 +579,24 @@ Everything tunable lives in `config.py`:
 - **Small-sample cells**: the formation heatmap hides any (formation,
   opponent formation) pairing with fewer than `MIN_MATCHUP_SAMPLES` (5)
   matches — a single upset shouldn't paint a whole cell green or red.
-- **New teams each time `SEASONS` widens**: `CLUB_TRANSFERMARKT_ID` and
-  `TEAM_NAME_MAP` only cover teams actually seen in a completed run so far.
-  Widening `SEASONS` (or waiting for a new promotion) will surface a fresh
-  `No coach-history rows for team=X` / unmapped-Understat-name warning —
-  expected, not a sign something's broken; fix it the same way the existing
-  entries were resolved (verify a Transfermarkt id live against the page's
-  `<title>` before trusting it — one early guess for Greuther Fürth
-  resolved to a completely different club).
+- **New teams used to need a hand-added `CLUB_TRANSFERMARKT_ID`/
+  `TEAM_NAME_MAP` entry every time `SEASONS` widened or a promotion
+  happened — this happened three times before it got automated.** Now a
+  team missing from both gets resolved live instead: `src/transfermarkt_search.py`
+  searches Transfermarkt for a club id (verified strictly against the
+  page's `<title>` — a mismatch rejects the guess rather than trusting it,
+  since nobody's manually double-checked an auto-resolved id the way a
+  `config.CLUB_TRANSFERMARKT_ID` entry has been) and
+  `src/team_name_matcher.py` fuzzy-matches an Understat name against
+  FBref's team list (validated against all 28 pairs already known correct,
+  including "FC Cologne" → "Köln" — an English/German name translation
+  with no shared substring, which still resolves at a clear margin from
+  the next-best guess). Both cache successful resolutions to
+  `data/club_transfermarkt_ids_auto.json` / `data/team_name_map_auto.json`
+  so it's a one-time cost per club, not a recurring one. A search or match
+  that isn't confident still falls back to the same manual-entry path as
+  before — this narrows how often that's needed, it doesn't claim to
+  eliminate it.
 - **A `pd.Timestamp.today()` bug already bit this once**: an early version
   of `fetch_coach_history.py` mapped an incumbent coach's blank "still
   active" end-date to *today's date* instead of leaving it open-ended. That
@@ -638,3 +651,10 @@ Everything tunable lives in `config.py`:
   categorical variant, since the working theory for why it lost is that
   it needs more depth to reach one-hot's effective resolution, not that
   categorical splits are inherently worse here.
+- The Transfermarkt-id/team-name auto-resolution only fills in GAPS -- it
+  never re-checks an existing `config.CLUB_TRANSFERMARKT_ID`/
+  `TEAM_NAME_MAP` entry, so a manually-configured id that quietly went
+  stale (Transfermarkt restructuring a club's page, say) wouldn't get
+  caught automatically. Periodically re-running the search for already-
+  configured clubs and diffing against the hardcoded values would catch
+  that class of drift, at the cost of extra requests on every run.
