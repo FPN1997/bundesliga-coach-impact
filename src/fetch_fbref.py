@@ -13,6 +13,12 @@ Two things verified against live data that shape this file (see README
    `round` value ("Matchweek 1", "Matchweek 2", ...) -- everything else
    (`round` like "Round of 64", "Group stage") gets filtered out.
 
+Guarded against silently regressing (see src/data_guard.py) two ways: a
+minimum fraction of requested teams must actually fetch successfully
+(row count alone is a weak signal here, since FBref lists a whole season's
+fixtures whether played or not), and the final row count can't drop
+drastically from what's already saved.
+
 Docs: https://soccerdata.readthedocs.io/en/latest/datasources/FBref.html
 """
 
@@ -26,6 +32,7 @@ import pandas as pd
 import soccerdata as sd
 
 import config
+from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -68,6 +75,19 @@ def fetch_fbref_matches() -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     log.info("FBref: %d league-match rows across %d teams", len(df), len(teams))
 
+    # Row count alone is a weak signal here -- FBref's per-team schedule
+    # lists the whole season's fixtures whether played or not, so total
+    # rows barely moves week to week regardless of how many teams' fetches
+    # actually succeeded. Missing TEAMS is the more sensitive failure mode
+    # for this particular source, so guard on that directly too.
+    fetched_teams = len(frames)
+    if teams and fetched_teams < len(teams) * 0.8:
+        raise RuntimeError(
+            f"Only {fetched_teams}/{len(teams)} teams fetched successfully -- "
+            f"check the ERROR log lines above (per-team fetch failures) before "
+            f"trusting this run's output."
+        )
+
     df["fbref_game_id"] = df["match_report"].astype(str).str.extract(GAME_ID_RE)
 
     # GF/GA occasionally render as e.g. "2 (1)" (shoot-out) in FBref's raw
@@ -81,6 +101,12 @@ def fetch_fbref_matches() -> pd.DataFrame:
 
     out_path = Path(config.RAW_DIR) / "fbref_schedule.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Secondary guard alongside the team-completeness check above: catches
+    # e.g. a season silently coming back empty even with every team
+    # nominally "succeeding". See src/data_guard.py's docstring.
+    guard_against_shrinkage(out_path, existing_parquet_row_count(out_path), len(df))
+
     df.to_parquet(out_path, index=False)
     log.info("Saved %d rows to %s", len(df), out_path)
     return df

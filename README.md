@@ -195,13 +195,22 @@ rm ~/Library/LaunchAgents/com.felixnitschke.bundesliga-coach-impact.weeklyrefres
   notification (e.g. `osascript -e 'display notification ...'` on failure,
   or an email) if silent failures are a real concern for how you're using
   this.
-- The `coach_history.csv` overwrite guard (see "Data sources" above)
-  protects against Transfermarkt blocking requests again, but if FBref or
-  Understat change shape instead, `weekly_refresh.sh` doesn't have an
-  equivalent guard for those — a bad run there could still write a
-  degraded `match_dataset.parquet` silently. Worth adding the same
-  "refuse to shrink drastically" pattern there if this runs unattended for
-  a long stretch.
+- All three raw fetches — Transfermarkt, FBref, Understat — now share the
+  same "refuse to shrink drastically" guard (`src/data_guard.py`), so an
+  unattended weekly run that hits a blocked/broken source fails loudly
+  (a `RuntimeError`, visible in `logs/refresh_*.log` as `FAILED`) rather
+  than silently writing a degraded dataset. FBref also has a second,
+  more targeted guard specific to it: it checks the *number of teams*
+  that fetched successfully, not just row count, since FBref lists a
+  whole season's fixtures whether played or not — a row-count check
+  alone wouldn't reliably catch some teams failing.
+- What's still unguarded: `build_dataset.py`'s merge step and everything
+  downstream of it (the outcome-predictor feature table, trained models).
+  A garbled-but-not-drastically-smaller upstream fetch (e.g. a source
+  corrupting values without changing row counts) would still flow through
+  silently. The three raw fetches are the actual entry points for bad
+  external data, so guarding there covers the most likely failure modes,
+  but it isn't an exhaustive guarantee.
 
 ## Predicting a match
 

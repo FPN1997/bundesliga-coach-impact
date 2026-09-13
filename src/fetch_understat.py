@@ -10,6 +10,11 @@ on (date, team). Understat's team names also don't match FBref's --
 config.TEAM_NAME_MAP renames them to FBref's canonical spelling.
 
 Docs: https://soccerdata.readthedocs.io/en/latest/datasources/Understat.html
+
+Guarded against silently regressing (see src/data_guard.py): unlike
+FBref's schedule, Understat only returns matches that have actually been
+played, so row count here should only ever grow -- a drop is a strong
+signal the fetch broke rather than a false alarm.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import pandas as pd
 import soccerdata as sd
 
 import config
+from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -70,6 +76,9 @@ def fetch_understat_matches() -> pd.DataFrame:
 
     out_path = Path(config.RAW_DIR) / "understat_matches.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    guard_against_shrinkage(out_path, existing_parquet_row_count(out_path), len(long_df))
+
     long_df.to_parquet(out_path, index=False)
     log.info("Saved %d team-match rows to %s", len(long_df), out_path)
     return long_df
