@@ -1,13 +1,14 @@
 """
 Predict a Bundesliga match outcome using one of the trained models.
 
-Computes each team's CURRENT form (rolling PPG/goal-diff/xG-diff/PPDA over
-their last FEATURE_ROLLING_WINDOW matches, season-to-date PPG, days into
-their current coach's tenure, recent-modal-formation) directly from
-data/processed/match_dataset.parquet and data/processed/coach_history.csv
--- the same feature definitions src/features.py uses, just evaluated as of
-now instead of as of a past match, since there's no "next match" row in
-the historical data to attach features to.
+Computes each team's CURRENT form (rolling PPG/goal-diff/xG-diff/PPDA/deep-
+completions over their last FEATURE_ROLLING_WINDOW matches, season-to-date
+PPG, days into their current coach's tenure, recent-modal-formation)
+directly from data/processed/match_dataset.parquet and
+data/processed/coach_history.csv -- the same feature definitions
+src/features.py uses, just evaluated as of now instead of as of a past
+match, since there's no "next match" row in the historical data to attach
+features to.
 
 Two modes:
 
@@ -15,7 +16,7 @@ Two modes:
   recent-formation tendency. This is the mode to use for an actual
   upcoming match -- everything it needs is knowable before kickoff.
   Defaults to the strongest pre-match-legal model documented in the
-  README: GridSearchCV-tuned Random Forest.
+  README: Optuna-tuned Random Forest.
 
   Explanatory (--formation and --opp-formation given): uses the formations
   you supply directly. This answers "what does the model think about this
@@ -38,16 +39,38 @@ from __future__ import annotations
 import argparse
 import difflib
 import sys
+from collections import Counter
 from pathlib import Path
 
 import joblib
 import pandas as pd
 
 import config
-from src.features import _rolling_mode
 from src.formation_utils import clean_formation
 
 ROLLING_WINDOW = config.FEATURE_ROLLING_WINDOW
+
+
+def _recent_formation(formations: list[str | None], window: int) -> str | None:
+    """The mode of this team's last `window` PLAYED (non-null) formations,
+    right up to and including their most recent match -- the "as of right
+    now" analogue of features.py's shift-safe recent_formation, but not
+    itself the same function: build_feature_table()'s recent_formation is
+    attached to a past match and therefore correctly EXCLUDES that match's
+    own formation (see features._rolling_mode); here there's no future
+    match to shift away from, so the correct window for "recent tendency
+    going into a hypothetical next match" is the last `window` matches
+    actually played, the most recent one included -- the direct analogue
+    of how current_team_state()'s numeric form stats use
+    `team_matches.tail(window)` below, not features._rolling_mode()'s
+    shifted definition. Calling features._rolling_mode(...)[-1] here would
+    silently be one match stale (verified live: 5/28 teams currently on
+    record disagree between the two, e.g. a team that just switched
+    formation in its most recent match)."""
+    played = [f for f in formations if f is not None][-window:]
+    if not played:
+        return None
+    return Counter(played).most_common(1)[0][0]
 
 
 def _load_matches() -> pd.DataFrame:
@@ -108,15 +131,17 @@ def current_team_state(team: str, matches: pd.DataFrame, coaches: pd.DataFrame) 
         "form_goal_diff": (recent["gf"] - recent["ga"]).mean(),
         "form_xg_diff": (recent["xg"] - recent["xga"]).mean(),
         "form_ppda": recent["ppda"].mean(),
+        "form_deep_completions": recent["deep_completions"].mean(),
         "season_ppg_to_date": season_matches["points"].mean(),
-        "recent_formation": _rolling_mode(team_matches["formation"].tolist(), ROLLING_WINDOW)[-1]
+        "recent_formation": _recent_formation(team_matches["formation"].tolist(), ROLLING_WINDOW)
                              or team_matches["formation"].iloc[-1],
         "last_match_date": team_matches["date"].iloc[-1].date(),
     }
 
 
 def _model_paths(variant: str, model: str, tuning: str) -> tuple[Path, Path]:
-    suffix = {"none": "", "grid": "_tuned", "optuna": "_optuna"}[tuning]
+    suffix = {"none": "", "grid": "_tuned", "grid-embargoed": "_tuned_embargoed",
+              "optuna": "_optuna"}[tuning]
     variant_tag = "_prematch" if variant == "prematch" else ""
     model_dir = Path(config.MODEL_DIR)
     model_path = model_dir / f"{model}{variant_tag}{suffix}.joblib"
@@ -124,7 +149,8 @@ def _model_paths(variant: str, model: str, tuning: str) -> tuple[Path, Path]:
     if not model_path.exists():
         sys.exit(f"{model_path} not found -- train it first "
                  f"(run_outcome_predictor.py / run_prematch_predictor.py / "
-                 f"run_tune_hyperparameters.py / run_tune_optuna.py, as appropriate).")
+                 f"run_tune_hyperparameters.py / run_tune_embargoed.py / "
+                 f"run_tune_optuna.py, as appropriate).")
     return model_path, encoder_path
 
 
@@ -149,7 +175,11 @@ def predict(
 
     variant = "actual" if explanatory else "prematch"
     default_model = "xgboost" if variant == "actual" else "random_forest"
-    default_tuning = "none" if variant == "actual" else "grid"
+    # "optuna", not "grid" -- after the deep_completions feature was added
+    # (see README "Wire up deep_completions"), Optuna-tuned Random Forest
+    # became the best pre-match-legal option (macro F1 0.522 vs grid-tuned's
+    # 0.498), reversing which tuning method wins for this variant.
+    default_tuning = "none" if variant == "actual" else "optuna"
     model_name = model_name or default_model
     tuning = tuning or default_tuning
 
@@ -163,12 +193,14 @@ def predict(
         "form_goal_diff": team_state["form_goal_diff"],
         "form_xg_diff": team_state["form_xg_diff"],
         "form_ppda": team_state["form_ppda"],
+        "form_deep_completions": team_state["form_deep_completions"],
         "season_ppg_to_date": team_state["season_ppg_to_date"],
         "coach_tenure_days": team_state["coach_tenure_days"],
         "opp_form_ppg": opp_state["form_ppg"],
         "opp_form_goal_diff": opp_state["form_goal_diff"],
         "opp_form_xg_diff": opp_state["form_xg_diff"],
         "opp_form_ppda": opp_state["form_ppda"],
+        "opp_form_deep_completions": opp_state["form_deep_completions"],
         "opp_season_ppg_to_date": opp_state["season_ppg_to_date"],
         "opp_coach_tenure_days": opp_state["coach_tenure_days"],
     }
@@ -224,8 +256,11 @@ def main() -> None:
     parser.add_argument("--opp-formation", help="--opponent's formation")
     parser.add_argument("--model", choices=["random_forest", "xgboost"], default=None,
                          help="Default: xgboost for explanatory, random_forest for pre-match")
-    parser.add_argument("--tuning", choices=["none", "grid", "optuna"], default=None,
-                         help="Default: none for explanatory, grid for pre-match")
+    parser.add_argument("--tuning", choices=["none", "grid", "grid-embargoed", "optuna"],
+                         default=None,
+                         help="Default: none for explanatory, optuna for pre-match. "
+                              "grid-embargoed uses run_tune_embargoed.py's models "
+                              "(see README Hyperparameter tuning)")
     parser.add_argument("--list-teams", action="store_true",
                          help="Print every team name in the dataset and exit")
     args = parser.parse_args()
