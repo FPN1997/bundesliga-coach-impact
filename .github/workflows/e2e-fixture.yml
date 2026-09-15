@@ -1,0 +1,33 @@
+name: E2E fixture pipeline
+
+# Deliberately NOT on push/PR, unlike ci.yml -- this is a smoke test of the
+# real pipeline wiring (build_dataset -> coach_impact -> formation_matrix ->
+# features -> outcome_predictor), not the unit tests, and doesn't need to
+# gate every commit. Runs weekly, plus workflow_dispatch for an on-demand
+# check (e.g. after bumping soccerdata or touching a schema-sensitive file).
+# See scripts/e2e_fixture_pipeline.py's module docstring for what gap this
+# closes and why it's a checked-in-as-code fixture rather than a live scrape.
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  e2e-fixture:
+    name: Run pipeline against fixture dataset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run E2E fixture pipeline
+        run: python scripts/e2e_fixture_pipeline.py
