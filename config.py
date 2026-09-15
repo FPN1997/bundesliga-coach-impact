@@ -165,3 +165,12 @@ MODEL_DIR = "outputs/models"
 # an empirical question, not something to assume either way -- which is
 # exactly why this got tested rather than just bumped and left undocumented.
 N_CV_SPLITS = 10
+
+# Embargo (in rows) between each TimeSeriesSplit fold's train and validation
+# slice, for src/tune_hyperparameters.py's gap= option (run_tune_embargoed.py).
+# The training feature table has one row per team per match (~2x a raw
+# fixture list, home + away), and a Bundesliga matchday is 9 fixtures ->
+# 18 rows -- verified live against the actual training set: 3388 train rows
+# over ~190 matchdays is ~17.8 rows/matchday, matching that arithmetic. One
+# full matchday's worth of embargo, not an arbitrary round number.
+CV_EMBARGO_GAP = 18

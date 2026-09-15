@@ -85,11 +85,27 @@ def _grid_search(pipe, param_grid: dict, X, y, tscv: TimeSeriesSplit) -> GridSea
 def tune_and_evaluate(
     formation_cols: list[str] = FORMATION_COLS_ACTUAL,
     variant: str = "",
+    gap: int = 0,
 ) -> dict:
     """variant: suffix appended to every tuned-model name / metrics key,
     e.g. "_prematch" when formation_cols=FORMATION_COLS_PREMATCH. Empty
     string (default) reproduces the original actual-formation tuning run,
-    same "<model>_tuned" keys as before this parameter existed."""
+    same "<model>_tuned" keys as before this parameter existed.
+
+    gap: rows excluded between each TimeSeriesSplit fold's train and
+    validation slice (sklearn's TimeSeriesSplit(gap=...), added in 0.24) --
+    an "embargo" between the two, not just chronological non-overlap. Every
+    fold already trains strictly before it validates, so this isn't fixing
+    a leak; it's addressing something softer: a validation fold's earliest
+    rows are otherwise immediately adjacent in time to the last training
+    rows, so their rolling-form features are highly serially correlated
+    with rows the model just trained on (a team's current purple patch or
+    injury crisis looks almost identical a few rows later) -- optimistic
+    validation scores that don't generalize as well to the genuinely
+    later, less-correlated real test set. gap=0 (default) reproduces the
+    original behavior exactly, same "<model>_tuned" keys as before this
+    parameter existed; gap>0 writes to "<model>_tuned_embargoed" instead so
+    both are visible side by side (see run_tune_embargoed.py)."""
     categorical = [*formation_cols, "venue"]
 
     df = build_feature_table()
@@ -103,8 +119,9 @@ def tune_and_evaluate(
     y_test = le.transform(test["result"])
     X_train, X_test = train[categorical + NUMERIC], test[categorical + NUMERIC]
 
-    tscv = TimeSeriesSplit(n_splits=N_CV_SPLITS)
+    tscv = TimeSeriesSplit(n_splits=N_CV_SPLITS, gap=gap)
     sample_weight = compute_sample_weight("balanced", y_train)
+    suffix = "_tuned_embargoed" if gap else "_tuned"
 
     metrics_path = Path(config.OUTPUT_DIR) / "outcome_model_metrics.json"
     metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
@@ -137,8 +154,8 @@ def tune_and_evaluate(
     xgb_pred = xgb_best.predict(X_test)
 
     results = {
-        f"random_forest{variant}_tuned": (rf_search, rf_best, rf_pred),
-        f"xgboost{variant}_tuned": (xgb_search, xgb_best, xgb_pred),
+        f"random_forest{variant}{suffix}": (rf_search, rf_best, rf_pred),
+        f"xgboost{variant}{suffix}": (xgb_search, xgb_best, xgb_pred),
     }
 
     for name, (search, best_model, pred) in results.items():
@@ -166,9 +183,9 @@ def tune_and_evaluate(
         log.info(
             "Tuning delta -- random_forest%s: macro_f1 %.3f -> %.3f | xgboost%s: macro_f1 %.3f -> %.3f",
             variant, untuned_rf.get("macro_f1", float("nan")),
-            metrics[f"random_forest{variant}_tuned"]["macro_f1"],
+            metrics[f"random_forest{variant}{suffix}"]["macro_f1"],
             variant, untuned_xgb.get("macro_f1", float("nan")),
-            metrics[f"xgboost{variant}_tuned"]["macro_f1"],
+            metrics[f"xgboost{variant}{suffix}"]["macro_f1"],
         )
 
     return metrics
