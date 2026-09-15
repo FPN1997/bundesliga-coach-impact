@@ -56,6 +56,7 @@ def _make_team_frame(n: int, season: str = "2324") -> pd.DataFrame:
         "xg": [float(i) for i in range(n)],
         "xga": [0.0] * n,  # xg_diff == xg == row index
         "ppda": [10.0 + i for i in range(n)],
+        "deep_completions": [2 * i for i in range(n)],  # form_deep_completions == 2*(mean index)
         "formation": (["4-2-3-1", "4-3-3"] * (n // 2 + 1))[:n],
     })
 
@@ -89,6 +90,18 @@ def test_one_team_features_goal_diff_and_xg_diff_are_shift_safe():
         assert out["form_goal_diff"].iloc[i] == pytest.approx(expected_gd)
         expected_xgd = expected_gd  # xg-xga constructed identically to gf-ga
         assert out["form_xg_diff"].iloc[i] == pytest.approx(expected_xgd)
+
+
+def test_one_team_features_deep_completions_is_shift_safe():
+    # deep_completions == 2*index by construction, so form_deep_completions
+    # at row i is 2 * (mean of indices [i-window, i)) -- NOT including i.
+    window = features.ROLLING_WINDOW
+    df = _make_team_frame(2 * window + 2)
+    out = features._one_team_features(df)
+
+    for i in range(window, len(df)):
+        expected = 2 * (sum(range(i - window, i)) / window)
+        assert out["form_deep_completions"].iloc[i] == pytest.approx(expected)
 
 
 def test_one_team_features_season_ppg_excludes_current_match():

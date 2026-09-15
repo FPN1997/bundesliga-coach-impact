@@ -1,5 +1,6 @@
 """
-Merge FBref (results + formations), Understat (xG + PPDA), and the coach
+Merge FBref (results + formations), Understat (xG + PPDA + deep completions),
+and the coach
 tenure table into one match-level dataset: one row per team per league
 match, with the coach in charge of that team on that date attached.
 
@@ -93,9 +94,9 @@ def build_dataset() -> pd.DataFrame:
     understat = understat.copy()
     understat["match_date"] = pd.to_datetime(understat["date"]).dt.normalize()
 
-    understat_slim = understat[["match_date", "team", "xg", "xga", "ppda", "points"]].rename(
-        columns={"points": "points_understat"}
-    )
+    understat_slim = understat[
+        ["match_date", "team", "xg", "xga", "ppda", "deep_completions", "points"]
+    ].rename(columns={"points": "points_understat"})
 
     # FBref's per-team schedule lists the full season's fixtures, played or
     # not -- including config.SEASONS' current/ongoing season pulls in every

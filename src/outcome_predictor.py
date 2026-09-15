@@ -3,8 +3,8 @@ Formation-aware match outcome predictor.
 
 Trains two classifiers (Random Forest, XGBoost) to predict a team's match
 result (win/draw/loss) from formation plus recent form (rolling PPG, goal
-difference, xG difference, PPDA, season-to-date PPG) and how long the
-current coach has been in charge. Runs in two variants, selected by
+difference, xG difference, PPDA, deep completions, season-to-date PPG) and
+how long the current coach has been in charge. Runs in two variants, selected by
 `formation_cols`/`variant`:
 
   - "actual" (default): formation/opp_formation, the formations actually
@@ -73,9 +73,10 @@ FORMATION_COLS_ACTUAL = ["formation", "opp_formation"]
 FORMATION_COLS_PREMATCH = ["recent_formation", "opp_recent_formation"]
 CATEGORICAL = [*FORMATION_COLS_ACTUAL, "venue"]  # kept for backward compatibility
 NUMERIC = [
-    "form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda", "season_ppg_to_date",
-    "coach_tenure_days", "opp_form_ppg", "opp_form_goal_diff", "opp_form_xg_diff",
-    "opp_form_ppda", "opp_season_ppg_to_date", "opp_coach_tenure_days",
+    "form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda", "form_deep_completions",
+    "season_ppg_to_date", "coach_tenure_days", "opp_form_ppg", "opp_form_goal_diff",
+    "opp_form_xg_diff", "opp_form_ppda", "opp_form_deep_completions",
+    "opp_season_ppg_to_date", "opp_coach_tenure_days",
 ]
 
 

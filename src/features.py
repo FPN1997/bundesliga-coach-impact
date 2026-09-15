@@ -71,11 +71,13 @@ def _one_team_features(d: pd.DataFrame) -> pd.DataFrame:
     xg_diff = (d["xg"] - d["xga"]).shift(1)
     points_prior = d["points"].shift(1)
     ppda_prior = d["ppda"].shift(1)
+    dc_prior = d["deep_completions"].shift(1)
 
     d["form_ppg"] = points_prior.rolling(ROLLING_WINDOW, min_periods=ROLLING_WINDOW).mean()
     d["form_goal_diff"] = goal_diff.rolling(ROLLING_WINDOW, min_periods=ROLLING_WINDOW).mean()
     d["form_xg_diff"] = xg_diff.rolling(ROLLING_WINDOW, min_periods=ROLLING_WINDOW).mean()
     d["form_ppda"] = ppda_prior.rolling(ROLLING_WINDOW, min_periods=ROLLING_WINDOW).mean()
+    d["form_deep_completions"] = dc_prior.rolling(ROLLING_WINDOW, min_periods=ROLLING_WINDOW).mean()
 
     # Season-to-date PPG: expanding mean within each season, shifted so the
     # match being featurized isn't included in its own average.
@@ -131,7 +133,7 @@ def build_feature_table() -> pd.DataFrame:
     featured = _attach_coach_tenure(featured)
 
     form_cols = ["form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda",
-                 "season_ppg_to_date", "coach_tenure_days"]
+                 "form_deep_completions", "season_ppg_to_date", "coach_tenure_days"]
 
     # Self-join: for each row, pull in the OPPONENT's own pre-match features
     # as of the same date (their "team" perspective row for this match).
