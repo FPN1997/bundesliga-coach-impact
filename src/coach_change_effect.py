@@ -37,6 +37,13 @@ Method (regression adjustment on control windows + a team-level cluster bootstra
     discard 11 of 39 mid-season sackings -- the worst runs, where control
     windows are rare -- i.e. exactly the cases the question is about.
     The effect is the average of (actual change - expected change).
+  - Fixture difficulty: the 8 matches after a change can simply be easier
+    than the 8 before -- more home games, weaker opponents. Each match is
+    rated by the points an AVERAGE team would expect from it (opponent's
+    season-average betting-market rating and venue; src/fixture_difficulty.py),
+    and the change in average rating between the two halves is a third
+    covariate in the adjustment. Only the opponent and venue are used, never
+    the team's own odds, which already price in the new coach.
   - Transfer windows: "the change" is everything that happens at that
     moment, including new signings. Each window records whether a
     registration period (config.TRANSFER_WINDOWS) is open during the
@@ -64,6 +71,8 @@ import pandas as pd
 
 import config
 from src import viz_style as vs
+from src.fetch_odds import load_odds
+from src.fixture_difficulty import fixture_ease
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -88,6 +97,7 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
         coach = g["coach"].to_numpy(dtype=object)
         season = g["season"].astype(str).to_numpy()
         dates = g["date"].to_numpy()
+        ease = g["fixture_ease"].to_numpy(dtype=float) if "fixture_ease" in g else None
         for i in range(window, len(g) - window + 1):
             span = coach[i - window:i + window]
             if pd.isna(span).any():
@@ -102,7 +112,14 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 kind = "control"
             else:
                 continue
+            fixtures = {}
+            if ease is not None:
+                before, after = ease[i - window:i], ease[i:i + window]
+                # a missing rating (no odds for that match) leaves the change undefined
+                fixtures = {"fixture_change": np.nan if np.isnan(before).any() or np.isnan(after).any()
+                            else after.mean() - before.mean()}
             rows.append({
+                **fixtures,
                 "team": team,
                 "date": dates[i],
                 "kind": kind,
@@ -126,9 +143,10 @@ class _AdjustedEstimator:
     least squares -- a closed-form solve per resample, so 2000 resamples
     take well under a second."""
 
-    COVARIATES = ("ppg_before", "xgd_before")
+    BASE_COVARIATES = ("ppg_before", "xgd_before")
 
-    def __init__(self, windows: pd.DataFrame, outcome: str):
+    def __init__(self, windows: pd.DataFrame, outcome: str, covariates: tuple[str, ...] = BASE_COVARIATES):
+        self.COVARIATES = covariates
         w = windows.dropna(subset=[f"{outcome}_before", f"{outcome}_after", *self.COVARIATES])
         self.teams = np.array(sorted(w["team"].unique()))
         team_idx = w["team"].map({t: k for k, t in enumerate(self.teams)}).to_numpy()
@@ -183,7 +201,11 @@ class _AdjustedEstimator:
 
 
 def estimate_effects(windows: pd.DataFrame) -> dict:
+    fixtures = "fixture_change" in windows
+    covariates = (*_AdjustedEstimator.BASE_COVARIATES, "fixture_change") if fixtures \
+        else _AdjustedEstimator.BASE_COVARIATES
     results: dict = {"window_matches": WINDOW, "method": "regression adjustment on controls",
+                     "covariates": list(covariates),
                      "bootstrap_resamples": N_BOOTSTRAP, "bootstrap_unit": "team"}
     groups = [
         ("mid_season", windows["in_season"]),
@@ -199,7 +221,7 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
             results[label] = {"ppg": {"n_treated": 0}, "xgd": {"n_treated": 0}}
             continue
         for outcome in ("ppg", "xgd"):
-            est = _AdjustedEstimator(subset, outcome)
+            est = _AdjustedEstimator(subset, outcome, covariates)
             summary = est.estimate()
             if summary["n_treated"]:
                 summary.update(est.bootstrap())
@@ -217,6 +239,21 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
                 "effect": slope * xgd["effect"],
                 "ci95": [slope * x for x in xgd["effect_ci95"]],
             }
+
+    if fixtures:
+        mid = windows[windows["in_season"]]
+        # How different were the fixtures after a sacking, vs. after nothing?
+        results["fixture_change_mean"] = {
+            kind: float(mid.loc[mid["kind"] == kind, "fixture_change"].mean())
+            for kind in ("treated", "control")
+        }
+        # The same mid-season estimate without the fixture adjustment, for comparison.
+        results["mid_season_without_fixture_adjustment"] = {}
+        for outcome in ("ppg", "xgd"):
+            est = _AdjustedEstimator(mid.dropna(subset=["fixture_change"]), outcome)
+            summary = est.estimate()
+            summary.update(est.bootstrap())
+            results["mid_season_without_fixture_adjustment"][outcome] = summary
     return results
 
 
@@ -295,6 +332,13 @@ def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
 
 def run() -> dict:
     matches = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
+    odds = load_odds()
+    if odds is not None:
+        matches["fixture_ease"] = fixture_ease(matches, odds)
+        log.info("Fixture ratings for %.1f%% of matches", 100 * matches["fixture_ease"].notna().mean())
+    else:
+        log.warning("No odds file -- estimating without the fixture-difficulty adjustment "
+                    "(run `bundesliga pipeline` to fetch odds).")
     windows = build_windows(matches)
     if windows.empty or not (windows["kind"] == "treated").any():
         log.warning("No coaching changes with full %d-match windows either side -- nothing to estimate.",
@@ -309,9 +353,8 @@ def run() -> dict:
         fit = results[label]["ppg"].get("control_fit")
         rows = (windows["kind"] == "treated") & (windows["in_season"] == in_season)
         if fit:
-            windows.loc[rows, "ppg_expected_change"] = (
-                fit["intercept"] + fit["ppg_before"] * windows.loc[rows, "ppg_before"]
-                + fit["xgd_before"] * windows.loc[rows, "xgd_before"])
+            windows.loc[rows, "ppg_expected_change"] = fit["intercept"] + sum(
+                coef * windows.loc[rows, name] for name, coef in fit.items() if name != "intercept")
 
     out_dir = Path(config.OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
