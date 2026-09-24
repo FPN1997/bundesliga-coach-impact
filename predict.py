@@ -15,8 +15,12 @@ Two modes:
   Pre-match (no --formation/--opp-formation given): uses each team's
   recent-formation tendency. This is the mode to use for an actual
   upcoming match -- everything it needs is knowable before kickoff.
-  Defaults to the strongest pre-match-legal model documented in the
-  README: Optuna-tuned Random Forest.
+  Defaults to the model with the best-calibrated probabilities against
+  the betting-market benchmark (src/market_benchmark.py): a logistic
+  regression trained for probabilities. The Optuna-tuned Random Forest
+  wins on macro-F1 but was trained with class-balanced weights, which
+  inflates draw probabilities -- the wrong trade-off for a tool whose
+  whole output IS the probabilities.
 
   Explanatory (--formation and --opp-formation given): uses the formations
   you supply directly. This answers "what does the model think about this
@@ -174,14 +178,12 @@ def predict(
         sys.exit("Give both --formation and --opp-formation, or neither.")
 
     variant = "actual" if explanatory else "prematch"
-    default_model = "xgboost" if variant == "actual" else "random_forest"
-    # "optuna", not "grid" -- after the deep_completions feature was added
-    # (see README "Wire up deep_completions"), Optuna-tuned Random Forest
-    # became the best pre-match-legal option (macro F1 0.522 vs grid-tuned's
-    # 0.498), reversing which tuning method wins for this variant.
-    default_tuning = "none" if variant == "actual" else "optuna"
-    model_name = model_name or default_model
-    tuning = tuning or default_tuning
+    # Pre-match default: the logistic regression, which scores best on
+    # probability quality against the betting market (see the module
+    # docstring). It has no --tuning variants: its regularization is
+    # already chosen by time-ordered CV on log loss when it's trained.
+    model_name = model_name or ("xgboost" if variant == "actual" else "logistic_regression")
+    tuning = tuning or "none"
 
     model_path, encoder_path = _model_paths(variant, model_name, tuning)
     pipe = joblib.load(model_path)
@@ -220,11 +222,17 @@ def predict(
 
     X = pd.DataFrame([row])
     proba = pipe.predict_proba(X)[0]
-    probs = dict(zip(le.classes_, proba, strict=True))
+    # Label-encoded models (RF/XGBoost) predict classes 0/1/2; the logistic
+    # regression was fit on the "D"/"L"/"W" strings directly.
+    classes = pipe.classes_ if isinstance(pipe.classes_[0], str) else le.classes_
+    probs = dict(zip(classes, proba, strict=True))
 
     print(f"\n{team} (home={venue=='home'}) vs {opponent}")
-    print(f"Model: {model_name} ({variant}"
-          f"{', ' + tuning + '-tuned' if tuning != 'none' else ', untuned'})\n")
+    if model_name == "logistic_regression":
+        how = "regularization chosen by time-ordered CV"
+    else:
+        how = f"{tuning}-tuned" if tuning != "none" else "untuned"
+    print(f"Model: {model_name} ({variant}, {how})\n")
     for label, name in [("W", f"{team} win"), ("D", "Draw"), ("L", f"{opponent} win")]:
         bar = "#" * round(probs.get(label, 0) * 40)
         print(f"  {name:16s} {probs.get(label, 0):5.1%}  {bar}")
@@ -254,11 +262,13 @@ def main() -> None:
                          help="Whether --team is playing at home (default: home)")
     parser.add_argument("--formation", help="--team's formation (switches to explanatory mode)")
     parser.add_argument("--opp-formation", help="--opponent's formation")
-    parser.add_argument("--model", choices=["random_forest", "xgboost"], default=None,
-                         help="Default: xgboost for explanatory, random_forest for pre-match")
+    parser.add_argument("--model", choices=["logistic_regression", "random_forest", "xgboost"],
+                         default=None,
+                         help="Default: xgboost for explanatory, logistic_regression for pre-match "
+                              "(logistic_regression is pre-match only)")
     parser.add_argument("--tuning", choices=["none", "grid", "grid-embargoed", "optuna"],
                          default=None,
-                         help="Default: none for explanatory, optuna for pre-match. "
+                         help="Default: none. Applies to random_forest/xgboost. "
                               "grid-embargoed uses run_tune_embargoed.py's models "
                               "(see README Hyperparameter tuning)")
     parser.add_argument("--list-teams", action="store_true",

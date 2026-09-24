@@ -131,6 +131,25 @@ TEAM_NAME_MAP = {
     "Paderborn": "Paderborn 07",
 }
 
+# football-data.co.uk team name -> canonical FBref team name, for the
+# betting-market benchmark (src/market_benchmark.py). Only names that differ
+# are listed. Resolved with src/team_name_matcher.py and checked by hand
+# against all 8 seasons: the matcher got 27/28 on its own and correctly
+# refused to guess "Bielefeld" (FBref: "Arminia", no shared substring).
+FOOTBALL_DATA_NAME_MAP = {
+    "Bielefeld": "Arminia",
+    "Darmstadt": "Darmstadt 98",
+    "Ein Frankfurt": "Frankfurt",
+    "FC Koln": "Köln",
+    "Fortuna Dusseldorf": "Düsseldorf",
+    "Greuther Furth": "Greuther Fürth",
+    "Hamburg": "Hamburger SV",
+    "Hertha": "Hertha BSC",
+    "M'gladbach": "Gladbach",
+    "Mainz": "Mainz 05",
+    "Paderborn": "Paderborn 07",
+}
+
 # FBref's team-schedule pages mix in cup/European fixtures. League matches
 # are the ones whose 'round' column matches this pattern.
 FBREF_LEAGUE_ROUND_PATTERN = r"^Matchweek\s+\d+$"
