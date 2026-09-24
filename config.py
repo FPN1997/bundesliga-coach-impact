@@ -17,6 +17,14 @@ LEAGUE = "GER-Bundesliga"
 # Keep this list short while you're developing the pipeline -- each season
 # is several dozen HTTP requests against FBref/Understat.
 SEASONS = [
+    # 2014-15 is as far back as Understat's xG/PPDA coverage goes. Extended
+    # from 2019-20 to roughly double the number of coaching changes the
+    # coach-change analysis can use.
+    "2014-2015",
+    "2015-2016",
+    "2016-2017",
+    "2017-2018",
+    "2018-2019",
     "2019-2020",
     "2020-2021",
     "2021-2022",
@@ -93,6 +101,12 @@ CLUB_TRANSFERMARKT_ID = {
     # newly-promoted clubs showed up. Both ids verified live.
     "Hamburger SV": 41,
     "Elversberg": 64,          # SV 07 Elversberg
+    # Added with the 2014-15..2018-19 seasons. Hannover 96 (42) and
+    # Ingolstadt (4795) auto-resolved and verified fine; Nürnberg's
+    # auto-resolution was REJECTED by the title check -- the search returned
+    # id 105, which is SV Darmstadt 98's page. id 4 verified by hand against
+    # the page title ("1.FC Nürnberg - Mitarbeiterhistorie").
+    "Nürnberg": 4,
 }
 
 # Understat team name -> canonical FBref team name (the canonical form used
@@ -136,6 +150,8 @@ TEAM_NAME_MAP = {
 # are listed. Resolved with src/team_name_matcher.py and checked by hand
 # against all 8 seasons: the matcher got 27/28 on its own and correctly
 # refused to guess "Bielefeld" (FBref: "Arminia", no shared substring).
+# Hannover/Nurnberg added when SEASONS was extended to 2014-15 (FBref names
+# checked against FBref's own season tables; "Ingolstadt" matches as-is).
 FOOTBALL_DATA_NAME_MAP = {
     "Bielefeld": "Arminia",
     "Darmstadt": "Darmstadt 98",
@@ -144,9 +160,11 @@ FOOTBALL_DATA_NAME_MAP = {
     "Fortuna Dusseldorf": "Düsseldorf",
     "Greuther Furth": "Greuther Fürth",
     "Hamburg": "Hamburger SV",
+    "Hannover": "Hannover 96",  # added with the 2014-15..2018-19 seasons
     "Hertha": "Hertha BSC",
     "M'gladbach": "Gladbach",
     "Mainz": "Mainz 05",
+    "Nurnberg": "Nürnberg",     # added with the 2014-15..2018-19 seasons
     "Paderborn": "Paderborn 07",
 }
 

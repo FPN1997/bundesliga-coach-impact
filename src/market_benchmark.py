@@ -62,14 +62,13 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 import config
 from src import viz_style as vs
-from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
 from src.features import build_feature_table
+from src.fetch_odds import fetch_odds, load_odds
 from src.outcome_predictor import FORMATION_COLS_PREMATCH, NUMERIC, _season_code, _split
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-ODDS_PATH = Path(config.RAW_DIR) / "football_data_odds.parquet"
 OUTCOMES = ["H", "D", "A"]  # ordered, as RPS requires
 ODDS_SETS = {
     "pre-match": ["AvgH", "AvgD", "AvgA"],          # market average, collected Fri/Tue before
@@ -83,33 +82,6 @@ N_BOOTSTRAP = 2000
 
 
 # --- odds ---------------------------------------------------------------
-
-def fetch_odds() -> pd.DataFrame:
-    """One row per match with pre-match/closing odds, team names FBref-normalized."""
-    import soccerdata as sd
-
-    raw = sd.MatchHistory(leagues=config.LEAGUE, seasons=config.SEASONS).read_games().reset_index()
-    cols = ["season", "date", "home_team", "away_team", "FTR"]
-    for odds_cols in ODDS_SETS.values():
-        cols += [c for c in odds_cols if c in raw.columns]
-    odds = raw[cols].copy()
-
-    fbref_teams = set(pd.read_parquet(Path(config.RAW_DIR) / "fbref_schedule.parquet",
-                                      columns=["team"])["team"])
-    for side in ("home_team", "away_team"):
-        odds[side] = odds[side].replace(config.FOOTBALL_DATA_NAME_MAP)
-    unknown = sorted((set(odds["home_team"]) | set(odds["away_team"])) - fbref_teams)
-    if unknown:
-        raise RuntimeError(f"football-data team names with no FBref match: {unknown} -- add them "
-                           f"to config.FOOTBALL_DATA_NAME_MAP")
-
-    odds["season"] = odds["season"].astype(str)
-    guard_against_shrinkage(ODDS_PATH, existing_parquet_row_count(ODDS_PATH), len(odds))
-    ODDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    odds.to_parquet(ODDS_PATH, index=False)
-    log.info("Saved %d matches of odds -> %s", len(odds), ODDS_PATH)
-    return odds
-
 
 def implied_probabilities(odds: pd.DataFrame, which: str) -> np.ndarray:
     """(n, 3) margin-free H/D/A probabilities; all-NaN rows where the odds are missing."""
@@ -209,7 +181,9 @@ def _score(forecasts: dict[str, np.ndarray], y: np.ndarray, base_name: str, mark
 
 
 def run(refresh_odds: bool = False) -> dict:
-    odds = fetch_odds() if refresh_odds or not ODDS_PATH.exists() else pd.read_parquet(ODDS_PATH)
+    odds = load_odds()
+    if refresh_odds or odds is None:
+        odds = fetch_odds()
     features = build_feature_table()
     train, _ = _split(features)
     test = build_test_frame(features, odds)

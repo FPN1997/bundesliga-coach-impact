@@ -1,7 +1,7 @@
 """
 One entry point for the whole project.
 
-    bundesliga pipeline [--skip-fetch]      fetch -> merge -> coach impact/effect -> formation analysis
+    bundesliga pipeline [--skip-fetch]      fetch (incl. odds) -> merge -> coach impact/effect -> formations
     bundesliga train [--variant ...]        outcome predictor (actual-formation and/or pre-match)
     bundesliga tune --method ...            hyperparameter tuning: grid | embargoed | optuna
     bundesliga native-categorical           XGBoost native-categorical-split experiment
@@ -70,17 +70,20 @@ def cmd_pipeline(args) -> None:
     else:
         from src.fetch_coach_history import fetch_coach_history
         from src.fetch_fbref import fetch_fbref_matches
+        from src.fetch_odds import fetch_odds
         from src.fetch_understat import fetch_understat_matches
-        log.info("Step 1/5: FBref (results + formations)")
+        log.info("Step 1/6: FBref (results + formations)")
         fetch_fbref_matches()
-        log.info("Step 2/5: Understat (xG, PPDA, deep completions)")
+        log.info("Step 2/6: Understat (xG, PPDA, deep completions)")
         fetch_understat_matches()
-        log.info("Step 3/5: Coach tenure history (Transfermarkt)")
+        log.info("Step 3/6: Coach tenure history (Transfermarkt)")
         fetch_coach_history()
+        log.info("Step 4/6: Betting odds (football-data.co.uk, for fixture difficulty)")
+        fetch_odds()
 
-    log.info("Step 4/5: Merging into match_dataset.parquet")
+    log.info("Step 5/6: Merging into match_dataset.parquet")
     build_dataset()
-    log.info("Step 5/5: Analysis")
+    log.info("Step 6/6: Analysis")
     compute_coach_impact()
     estimate_coach_change_effect()
     build_formation_matrix()
