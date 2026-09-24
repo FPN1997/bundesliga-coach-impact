@@ -26,8 +26,8 @@ Two modes:
   you supply directly. This answers "what does the model think about this
   matchup GIVEN these formations" -- useful for exploring the formation
   matrix, not a genuine forecast, since you don't know the opponent's
-  actual matchday formation in advance. Defaults to the best explanatory
-  model: untuned XGBoost.
+  actual matchday formation in advance. Defaults to untuned XGBoost; the
+  tuned alternatives score within noise of it (docs/results-in-depth.md).
 
 Usage:
     python predict.py --list-teams
@@ -143,6 +143,41 @@ def current_team_state(team: str, matches: pd.DataFrame, coaches: pd.DataFrame) 
     }
 
 
+def feature_row(team_state: dict, opp_state: dict, venue: str,
+                formation: str | None = None, opp_formation: str | None = None) -> dict:
+    """The model input row for one match, from both teams' current_team_state().
+    Explanatory mode if formations are given, pre-match (recent formations) otherwise."""
+    row = {"venue": "Home" if venue == "home" else "Away"}
+    for key in ("form_ppg", "form_goal_diff", "form_xg_diff", "form_ppda", "form_deep_completions",
+                "season_ppg_to_date", "coach_tenure_days"):
+        row[key] = team_state[key]
+        row[f"opp_{key}"] = opp_state[key]
+    # The models can't take a missing numeric value -- fall back to 0 rather
+    # than crash if a coach lookup came up empty (e.g. a club with no
+    # coach-history rows yet). Shown as "None" in the printed form line.
+    for key in ("coach_tenure_days", "opp_coach_tenure_days"):
+        if row[key] is None:
+            row[key] = 0
+    if formation is not None:
+        row["formation"] = clean_formation(formation)
+        row["opp_formation"] = clean_formation(opp_formation)
+    else:
+        row["recent_formation"] = team_state["recent_formation"]
+        row["opp_recent_formation"] = opp_state["recent_formation"]
+    return row
+
+
+def forecast(pipe, le, team_state: dict, opp_state: dict, venue: str,
+             formation: str | None = None, opp_formation: str | None = None) -> tuple[dict, dict]:
+    """({"W": p, "D": p, "L": p} from team_state's side, the model input row)."""
+    row = feature_row(team_state, opp_state, venue, formation, opp_formation)
+    proba = pipe.predict_proba(pd.DataFrame([row]))[0]
+    # Label-encoded models (RF/XGBoost) predict classes 0/1/2; the logistic
+    # regression was fit on the "D"/"L"/"W" strings directly.
+    classes = pipe.classes_ if isinstance(pipe.classes_[0], str) else le.classes_
+    return {str(c): float(p) for c, p in zip(classes, proba, strict=True)}, row
+
+
 def _model_paths(variant: str, model: str, tuning: str) -> tuple[Path, Path]:
     suffix = {"none": "", "grid": "_tuned", "grid-embargoed": "_tuned_embargoed",
               "optuna": "_optuna"}[tuning]
@@ -187,44 +222,7 @@ def predict(
     model_path, encoder_path = _model_paths(variant, model_name, tuning)
     pipe = joblib.load(model_path)
     le = joblib.load(encoder_path)
-
-    row = {
-        "venue": "Home" if venue == "home" else "Away",
-        "form_ppg": team_state["form_ppg"],
-        "form_goal_diff": team_state["form_goal_diff"],
-        "form_xg_diff": team_state["form_xg_diff"],
-        "form_ppda": team_state["form_ppda"],
-        "form_deep_completions": team_state["form_deep_completions"],
-        "season_ppg_to_date": team_state["season_ppg_to_date"],
-        "coach_tenure_days": team_state["coach_tenure_days"],
-        "opp_form_ppg": opp_state["form_ppg"],
-        "opp_form_goal_diff": opp_state["form_goal_diff"],
-        "opp_form_xg_diff": opp_state["form_xg_diff"],
-        "opp_form_ppda": opp_state["form_ppda"],
-        "opp_form_deep_completions": opp_state["form_deep_completions"],
-        "opp_season_ppg_to_date": opp_state["season_ppg_to_date"],
-        "opp_coach_tenure_days": opp_state["coach_tenure_days"],
-    }
-    # Random Forest (unlike XGBoost) can't handle a missing numeric value --
-    # fall back to 0 rather than crash if a coach lookup came up empty (e.g.
-    # a club not yet in config.CLUB_TRANSFERMARKT_ID). Flagged in the
-    # printed output, not silently swallowed.
-    for key in ("coach_tenure_days", "opp_coach_tenure_days"):
-        if row[key] is None:
-            row[key] = 0
-    if explanatory:
-        row["formation"] = clean_formation(formation)
-        row["opp_formation"] = clean_formation(opp_formation)
-    else:
-        row["recent_formation"] = team_state["recent_formation"]
-        row["opp_recent_formation"] = opp_state["recent_formation"]
-
-    X = pd.DataFrame([row])
-    proba = pipe.predict_proba(X)[0]
-    # Label-encoded models (RF/XGBoost) predict classes 0/1/2; the logistic
-    # regression was fit on the "D"/"L"/"W" strings directly.
-    classes = pipe.classes_ if isinstance(pipe.classes_[0], str) else le.classes_
-    probs = dict(zip(classes, proba, strict=True))
+    probs, row = forecast(pipe, le, team_state, opp_state, venue, formation, opp_formation)
 
     print(f"\n{team} (home={venue=='home'}) vs {opponent}")
     if model_name == "logistic_regression":

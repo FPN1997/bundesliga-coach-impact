@@ -121,3 +121,24 @@ def test_recent_formation_helper_ignores_none_and_uses_the_tail_window():
 
 def test_recent_formation_helper_returns_none_when_nothing_played():
     assert predict._recent_formation([None, None], window=3) is None
+
+
+def _state(team: str, tenure):
+    return {"team": team, "form_ppg": 1.0, "form_goal_diff": 0.5, "form_xg_diff": 0.2,
+            "form_ppda": 10.0, "form_deep_completions": 6.0, "season_ppg_to_date": 1.5,
+            "coach_tenure_days": tenure, "recent_formation": "4-2-3-1"}
+
+
+def test_feature_row_prematch_has_every_model_column_and_no_missing_values():
+    from src.outcome_predictor import FORMATION_COLS_PREMATCH, NUMERIC
+    row = predict.feature_row(_state("A", None), _state("B", 30), "home")
+    assert set(row) == {*NUMERIC, *FORMATION_COLS_PREMATCH, "venue"}
+    assert row["coach_tenure_days"] == 0      # unknown coach -> 0, not None
+    assert row["opp_coach_tenure_days"] == 30
+    assert row["venue"] == "Home"
+
+
+def test_feature_row_explanatory_uses_given_formations_not_recent_ones():
+    row = predict.feature_row(_state("A", 1), _state("B", 1), "away", "4-3-3", "3-5-2")
+    assert (row["formation"], row["opp_formation"], row["venue"]) == ("4-3-3", "3-5-2", "Away")
+    assert "recent_formation" not in row
