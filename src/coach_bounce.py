@@ -163,6 +163,18 @@ def train_and_evaluate(min_prior_matches: int = MIN_PRIOR_MATCHES) -> dict:
         metrics["baseline_loo_r2"], metrics["baseline_loo_mae"],
     )
 
+    # Where does any predictive power come from? The team's own form before
+    # the change (i.e. regression to the mean, which the coaching-change
+    # analysis handles properly) or the incoming coach's record -- the thing
+    # this model exists to test? Same model, same LOO, one feature group each.
+    metrics["ablation_loo_r2"] = {}
+    for label, cols in [("team_form_only", TEAM_FORM_COLS), ("coach_history_only", COACH_HISTORY_COLS)]:
+        ablated = cross_val_predict(RidgeCV(alphas=np.logspace(-2, 3, 30)), df[cols].to_numpy(), y, cv=loo)
+        metrics["ablation_loo_r2"][label] = float(r2_score(y, ablated))
+    log.info("Ablation, LOO R2: team form only %.3f | coach history only %.3f | both %.3f",
+             metrics["ablation_loo_r2"]["team_form_only"],
+             metrics["ablation_loo_r2"]["coach_history_only"], metrics["loo_r2"])
+
     model.fit(X, y)  # final fit on everything -- LOO above was for evaluation only
     metrics["chosen_alpha"] = float(model.alpha_)
     metrics["coefficients"] = dict(zip(FEATURE_COLS, model.coef_.tolist(), strict=True))
