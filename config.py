@@ -186,7 +186,7 @@ MODEL_DIR = "outputs/models"
 N_CV_SPLITS = 10
 
 # Embargo (in rows) between each TimeSeriesSplit fold's train and validation
-# slice, for src/tune_hyperparameters.py's gap= option (run_tune_embargoed.py).
+# slice, for src/tune_hyperparameters.py's gap= option (`bundesliga tune --method embargoed`).
 # The training feature table has one row per team per match (~2x a raw
 # fixture list, home + away), and a Bundesliga matchday is 9 fixtures ->
 # 18 rows -- verified live against the actual training set: 3388 train rows

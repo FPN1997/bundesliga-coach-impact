@@ -80,7 +80,7 @@ def _recent_formation(formations: list[str | None], window: int) -> str | None:
 def _load_matches() -> pd.DataFrame:
     path = Path(config.PROCESSED_DIR) / "match_dataset.parquet"
     if not path.exists():
-        sys.exit(f"{path} not found -- run `python run_pipeline.py` first.")
+        sys.exit(f"{path} not found -- run `bundesliga pipeline` first.")
     df = pd.read_parquet(path)
     df["formation"] = df["formation"].apply(clean_formation)
     df["opp_formation"] = df["opp_formation"].apply(clean_formation)
@@ -90,7 +90,7 @@ def _load_matches() -> pd.DataFrame:
 def _load_coach_history() -> pd.DataFrame:
     path = Path(config.COACH_HISTORY_RESOLVED_CSV)
     if not path.exists():
-        sys.exit(f"{path} not found -- run `python run_pipeline.py` first.")
+        sys.exit(f"{path} not found -- run `bundesliga pipeline` first.")
     return pd.read_csv(path, parse_dates=["start_date"])
 
 
@@ -152,9 +152,8 @@ def _model_paths(variant: str, model: str, tuning: str) -> tuple[Path, Path]:
     encoder_path = model_dir / f"label_encoder{variant_tag}.joblib"
     if not model_path.exists():
         sys.exit(f"{model_path} not found -- train it first "
-                 f"(run_outcome_predictor.py / run_prematch_predictor.py / "
-                 f"run_tune_hyperparameters.py / run_tune_embargoed.py / "
-                 f"run_tune_optuna.py, as appropriate).")
+                 f"(`bundesliga train`, `bundesliga tune --method ...`, or "
+                 f"`bundesliga benchmark` for logistic_regression).")
     return model_path, encoder_path
 
 
@@ -269,7 +268,7 @@ def main() -> None:
     parser.add_argument("--tuning", choices=["none", "grid", "grid-embargoed", "optuna"],
                          default=None,
                          help="Default: none. Applies to random_forest/xgboost. "
-                              "grid-embargoed uses run_tune_embargoed.py's models "
+                              "grid-embargoed uses `bundesliga tune --method embargoed`'s models "
                               "(see README Hyperparameter tuning)")
     parser.add_argument("--list-teams", action="store_true",
                          help="Print every team name in the dataset and exit")

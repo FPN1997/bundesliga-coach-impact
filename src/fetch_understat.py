@@ -57,7 +57,7 @@ def _save_auto_resolved_map(mapping: dict[str, str]) -> None:
 
 def _fbref_team_names() -> list[str]:
     """The current, authoritative FBref team list to fuzzy-match against.
-    fetch_fbref.py always runs before this step in run_pipeline.py, so its
+    fetch_fbref.py always runs before this step in `bundesliga pipeline`, so its
     raw output should already exist; falls back to config.TEAM_NAME_MAP's
     own values (a strict subset -- only teams someone has already resolved)
     if run standalone before ever fetching FBref."""

@@ -1,11 +1,11 @@
 """
-Merge FBref (results + formations), Understat (xG + PPDA + deep completions),
-and the coach
-tenure table into one match-level dataset: one row per team per league
-match, with the coach in charge of that team on that date attached.
+Merge FBref (results + formations), Understat (xG + PPDA + deep
+completions), and the coach tenure table into one match-level dataset: one
+row per team per league match, with the coach in charge of that team on
+that date attached.
 
 Run fetch_fbref.py, fetch_understat.py, and fetch_coach_history.py first
-(or just run run_pipeline.py, which does it in order).
+(or just run `bundesliga pipeline`, which does it in order).
 """
 
 from __future__ import annotations

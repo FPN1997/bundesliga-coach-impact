@@ -1,12 +1,12 @@
 # Exact-pinned dependency versions, generated with `pip freeze` from a
 # known-working environment (Python 3.13.13, see below). Use this instead
-# of requirements.txt for a reproducible install ("clone and it just
-# works" a year from now) -- requirements.txt stays the human-readable,
-# loosely-pinned spec for understanding what's actually needed and why.
+# of `pip install -e .` for a reproducible install ("clone and it just
+# works" a year from now) -- pyproject.toml stays the human-readable,
+# loosely-pinned spec for what's actually needed and why.
 #
 # Regenerate after intentionally upgrading a dependency:
-#   pip install -r requirements.txt --upgrade
-#   pip freeze > requirements-lock.txt
+#   pip install -e ".[dev]" --upgrade
+#   pip freeze --exclude-editable > requirements-lock.txt
 #
 # Python version this was generated with: 3.13.13
 alembic==1.19.2

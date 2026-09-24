@@ -8,7 +8,7 @@ non-empty output without raising.
 Why this exists: the unit tests in tests/ all use small synthetic
 DataFrames scoped to one function each (leak-safety, the time-based split,
 the overwrite guards, ...) -- real, valuable, but none of them actually
-wire the pipeline stages together the way run_pipeline.py does. A
+wire the pipeline stages together the way `bundesliga pipeline` does. A
 schema mismatch between what fetch_fbref.py/fetch_understat.py actually
 save and what build_dataset.py expects to read (exactly the kind of thing
 a future soccerdata release could cause -- see README "Known rough edges")
@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pandas as pd
 
-# This lives in scripts/, not the repo root like run_*.py -- put the repo
+# This lives in scripts/, not the repo root like cli.py -- put the repo
 # root on sys.path so `import config` / `from src...` resolve the same way
 # they do for the root-level entry points, regardless of the caller's cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

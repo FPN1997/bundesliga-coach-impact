@@ -105,7 +105,7 @@ def tune_and_evaluate(
     later, less-correlated real test set. gap=0 (default) reproduces the
     original behavior exactly, same "<model>_tuned" keys as before this
     parameter existed; gap>0 writes to "<model>_tuned_embargoed" instead so
-    both are visible side by side (see run_tune_embargoed.py)."""
+    both are visible side by side (see `bundesliga tune --method embargoed`)."""
     categorical = [*formation_cols, "venue"]
 
     df = build_feature_table()

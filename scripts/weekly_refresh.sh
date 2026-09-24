@@ -88,7 +88,7 @@ STATUS=1
     if wait_for_network; then
         for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             log "--- Attempt $attempt/$MAX_ATTEMPTS ---"
-            run_with_timeout "$ATTEMPT_TIMEOUT_SECONDS" python run_pipeline.py
+            run_with_timeout "$ATTEMPT_TIMEOUT_SECONDS" python cli.py pipeline
             STATUS=$?
             [ "$STATUS" -eq 0 ] && break
             log "Attempt $attempt failed (exit $STATUS)"

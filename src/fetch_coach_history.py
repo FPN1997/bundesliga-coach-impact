@@ -185,7 +185,7 @@ AUTO_RESOLVED_PATH = Path("data/club_transfermarkt_ids_auto.json")
 def _teams_needing_coach_data() -> list[str]:
     """Every team to fetch coach history for. Prefers the authoritative,
     current list from the just-fetched FBref data (fetch_fbref.py always
-    runs before this step in run_pipeline.py) over the static
+    runs before this step in `bundesliga pipeline`) over the static
     config.CLUB_TRANSFERMARKT_ID keys -- that dict only lists teams
     someone has already resolved an id for, so iterating IT would never
     even attempt a genuinely new team, auto-resolvable or not."""
