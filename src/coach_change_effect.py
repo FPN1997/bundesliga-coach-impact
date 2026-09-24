@@ -44,6 +44,12 @@ Method (regression adjustment on control windows + a team-level cluster bootstra
     and the change in average rating between the two halves is a third
     covariate in the adjustment. Only the opponent and venue are used, never
     the team's own odds, which already price in the new coach.
+  - Squad changes: injuries and new signings (Transfermarkt, via
+    src/fetch_squads.py and src/squad_availability.py). For each half, the
+    share of squad market value out injured and the share that arrived in
+    January; their changes between the halves are two more covariates, used
+    only when squad data covers at least SQUAD_MIN_COVERAGE of the windows.
+    "The change" then means mostly the coach, including his team selection.
   - Transfer windows: "the change" is everything that happens at that
     moment, including new signings. Each window records whether a
     registration period (config.TRANSFER_WINDOWS) is open during the
@@ -73,12 +79,18 @@ import config
 from src import viz_style as vs
 from src.fetch_odds import load_odds
 from src.fixture_difficulty import fixture_ease
+from src.squad_availability import match_availability
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 WINDOW = config.IMPACT_WINDOW
 N_BOOTSTRAP = 2000
+# Per-match measures whose change between the two halves is a covariate.
+PER_MATCH_CHANGES = {"fixture_ease": "fixture_change", "injured_share": "injury_change",
+                     "new_signings_share": "signing_change"}
+SQUAD_COVARIATES = ("injury_change", "signing_change")
+SQUAD_MIN_COVERAGE = 0.95
 _TRANSFER_WINDOWS = [(pd.Timestamp(a), pd.Timestamp(b)) for a, b in config.TRANSFER_WINDOWS]
 
 
@@ -97,7 +109,7 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
         coach = g["coach"].to_numpy(dtype=object)
         season = g["season"].astype(str).to_numpy()
         dates = g["date"].to_numpy()
-        ease = g["fixture_ease"].to_numpy(dtype=float) if "fixture_ease" in g else None
+        per_match = {col: g[col].to_numpy(dtype=float) for col in PER_MATCH_CHANGES if col in g}
         for i in range(window, len(g) - window + 1):
             span = coach[i - window:i + window]
             if pd.isna(span).any():
@@ -112,14 +124,14 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 kind = "control"
             else:
                 continue
-            fixtures = {}
-            if ease is not None:
-                before, after = ease[i - window:i], ease[i:i + window]
-                # a missing rating (no odds for that match) leaves the change undefined
-                fixtures = {"fixture_change": np.nan if np.isnan(before).any() or np.isnan(after).any()
-                            else after.mean() - before.mean()}
+            changes = {}
+            for col, values in per_match.items():
+                before, after = values[i - window:i], values[i:i + window]
+                # a missing value (no odds / no squad data for a match) leaves the change undefined
+                changes[PER_MATCH_CHANGES[col]] = (np.nan if np.isnan(before).any() or np.isnan(after).any()
+                                                   else after.mean() - before.mean())
             rows.append({
-                **fixtures,
+                **changes,
                 "team": team,
                 "date": dates[i],
                 "kind": kind,
@@ -201,9 +213,18 @@ class _AdjustedEstimator:
 
 
 def estimate_effects(windows: pd.DataFrame) -> dict:
-    fixtures = "fixture_change" in windows
-    covariates = (*_AdjustedEstimator.BASE_COVARIATES, "fixture_change") if fixtures \
-        else _AdjustedEstimator.BASE_COVARIATES
+    base = _AdjustedEstimator.BASE_COVARIATES
+    extra = ["fixture_change"] if "fixture_change" in windows else []
+    squad = [c for c in SQUAD_COVARIATES if c in windows]
+    if squad:
+        coverage = float(windows[squad].notna().all(axis=1).mean())
+        if coverage >= SQUAD_MIN_COVERAGE:
+            extra += squad
+        else:
+            log.warning("Squad data covers only %.0f%% of windows (need %.0f%%) -- estimating "
+                        "without the injury/new-signing adjustment. Run `bundesliga squad`.",
+                        100 * coverage, 100 * SQUAD_MIN_COVERAGE)
+    covariates = (*base, *extra)
     results: dict = {"window_matches": WINDOW, "method": "regression adjustment on controls",
                      "covariates": list(covariates),
                      "bootstrap_resamples": N_BOOTSTRAP, "bootstrap_unit": "team"}
@@ -240,20 +261,29 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
                 "ci95": [slope * x for x in xgd["effect_ci95"]],
             }
 
-    if fixtures:
-        mid = windows[windows["in_season"]]
-        # How different were the fixtures after a sacking, vs. after nothing?
-        results["fixture_change_mean"] = {
-            kind: float(mid.loc[mid["kind"] == kind, "fixture_change"].mean())
-            for kind in ("treated", "control")
+    if extra:
+        mid = windows[windows["in_season"]].dropna(subset=extra)
+        # How different were the fixtures / injuries / signings after a
+        # sacking, compared with after nothing?
+        results["change_means"] = {
+            c: {kind: float(mid.loc[mid["kind"] == kind, c].mean()) for kind in ("treated", "control")}
+            for c in extra
         }
-        # The same mid-season estimate without the fixture adjustment, for comparison.
-        results["mid_season_without_fixture_adjustment"] = {}
-        for outcome in ("ppg", "xgd"):
-            est = _AdjustedEstimator(mid.dropna(subset=["fixture_change"]), outcome)
-            summary = est.estimate()
-            summary.update(est.bootstrap())
-            results["mid_season_without_fixture_adjustment"][outcome] = summary
+        # The mid-season estimate with each layer of adjustment, all on the
+        # same windows so the comparison is like for like.
+        specs = {"base": base}
+        if "fixture_change" in extra:
+            specs["fixtures"] = (*base, "fixture_change")
+        if any(c in extra for c in SQUAD_COVARIATES):
+            specs["fixtures_and_squad"] = covariates
+        results["mid_season_specifications"] = {}
+        for name, covs in specs.items():
+            results["mid_season_specifications"][name] = {"covariates": list(covs)}
+            for outcome in ("ppg", "xgd"):
+                est = _AdjustedEstimator(mid, outcome, covs)
+                summary = est.estimate()
+                summary.update(est.bootstrap())
+                results["mid_season_specifications"][name][outcome] = summary
     return results
 
 
@@ -339,6 +369,13 @@ def run() -> dict:
     else:
         log.warning("No odds file -- estimating without the fixture-difficulty adjustment "
                     "(run `bundesliga pipeline` to fetch odds).")
+    squads_file = Path(config.RAW_DIR) / "tm_squads.parquet"
+    injuries_file = Path(config.RAW_DIR) / "tm_injuries.parquet"
+    if squads_file.exists() and injuries_file.exists():
+        availability = match_availability(matches, pd.read_parquet(squads_file),
+                                          pd.read_parquet(injuries_file))
+        matches[["injured_share", "new_signings_share"]] = availability
+        log.info("Squad data for %.1f%% of matches", 100 * availability["injured_share"].notna().mean())
     windows = build_windows(matches)
     if windows.empty or not (windows["kind"] == "treated").any():
         log.warning("No coaching changes with full %d-match windows either side -- nothing to estimate.",

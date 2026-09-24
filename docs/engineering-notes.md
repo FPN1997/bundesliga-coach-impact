@@ -46,6 +46,16 @@ fresh browser was fast again). `fetch_fbref.py` now starts a fresh browser every
 downloaded pages. The weekly refresh only downloads the current season (~1 page per
 club), so it's rarely affected.
 
+**Transfermarkt blocks bulk scraping.** Squad data (squads, market values, January
+arrivals, injury histories; `src/fetch_squads.py`) takes ~3,000 Transfermarkt pages. The
+first run, 2 seconds apart, was blocked after ~1,100 requests in about an hour: every page
+returned HTTP 405 with `x-amzn-waf-action: captcha`. The project doesn't try to get around
+a block. Instead every Transfermarkt fetcher recognizes it (a firewall header, 403/405/429,
+or an empty body) and stops at the first one; the squad scrape runs at 4 seconds per
+request and at most 400 live requests per run, caching every page so each run continues
+where the last stopped; and the weekly refresh keeps the previous coach history if
+Transfermarkt is blocking, rather than losing the week's match data.
+
 **Odds: the format changed in 2019-20.** Earlier seasons on football-data.co.uk carry the
 market average as Betbrain's `BbAvH/D/A` and have no closing odds; `fetch_odds.py` folds
 those into the current `AvgH/D/A` columns.

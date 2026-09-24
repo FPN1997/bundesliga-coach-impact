@@ -7,6 +7,7 @@ One entry point for the whole project.
     bundesliga native-categorical           XGBoost native-categorical-split experiment
     bundesliga coach-effect                 does a coaching change help, beyond regression to the mean?
     bundesliga bounce                       coach-bounce predictor (small-sample, see README)
+    bundesliga squad                        squads, injuries, winter signings (Transfermarkt, cached)
     bundesliga benchmark [--refresh-odds]   pre-match forecasts vs. betting-market odds
     bundesliga predict ...                  forecast a match (see `bundesliga predict --help`)
     bundesliga site                         rebuild the published results page (site/)
@@ -57,6 +58,22 @@ def _suffix(variant: str) -> str:
     return "_prematch" if variant == "prematch" else ""
 
 
+def refresh_coach_history(fetch) -> None:
+    """Run the coach-history fetch, but if Transfermarkt is blocking us, keep
+    the previous coach history rather than failing the whole refresh --
+    coaching changes are rare, so a stale week costs far less than losing the
+    week's match data. Without a previous file there's nothing to fall back on."""
+    from src.fetch_coach_history import TransfermarktBlocked
+    try:
+        fetch()
+    except TransfermarktBlocked as exc:
+        if not Path(config.COACH_HISTORY_RESOLVED_CSV).exists():
+            raise
+        log.warning("Transfermarkt is blocking requests (%s) -- keeping the previous coach history. "
+                    "Coaching changes since its last successful fetch are missing until it unblocks.",
+                    exc)
+
+
 # --- commands -------------------------------------------------------------
 
 def cmd_pipeline(args) -> None:
@@ -77,7 +94,7 @@ def cmd_pipeline(args) -> None:
         log.info("Step 2/6: Understat (xG, PPDA, deep completions)")
         fetch_understat_matches()
         log.info("Step 3/6: Coach tenure history (Transfermarkt)")
-        fetch_coach_history()
+        refresh_coach_history(fetch_coach_history)
         log.info("Step 4/6: Betting odds (football-data.co.uk, for fixture difficulty)")
         fetch_odds()
 
@@ -129,6 +146,12 @@ def cmd_bounce(args) -> None:
     _require(_match_dataset(), Path(config.OUTPUT_DIR) / "coach_impact_rankings.csv",
              hint="bundesliga pipeline")
     train_and_evaluate()
+
+
+def cmd_squad(args) -> None:
+    from src.fetch_squads import fetch_squads
+    _require(_match_dataset(), hint="bundesliga pipeline")
+    fetch_squads()
 
 
 def cmd_benchmark(args) -> None:
@@ -196,6 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("coach-effect", help="effect of a coaching change beyond regression to the mean") \
         .set_defaults(func=cmd_coach_effect)
     sub.add_parser("bounce", help="coach-bounce predictor").set_defaults(func=cmd_bounce)
+    sub.add_parser("squad", help="squads, market values, winter signings and injuries "
+                                 "(Transfermarkt; slow the first time, then cached)") \
+        .set_defaults(func=cmd_squad)
 
     p = sub.add_parser("benchmark", help="score pre-match forecasts against betting odds")
     p.add_argument("--refresh-odds", action="store_true", help="re-download odds first")
