@@ -281,16 +281,15 @@ $("kicker").textContent = `Bundesliga ${M.seasons[0]} to ${M.seasons[1]} · ${M.
 const implied = CE.results.mid_season.ppg_implied_by_xgd_effect;
 para($("lede"), [
   "Teams that sack their coach mid-season do improve. But teams in the same slump that ",
-  { b: "kept" }, " their coach improve almost as much — bad runs end on their own. ",
-  "The change itself is worth a real but modest amount: clearly better chances, and ",
-  implied ? `probably around ${fmt(implied.effect, 1)} points per game, ` : "",
-  "not the half a point the raw numbers suggest.",
+  { b: "kept" }, " their coach improve by about two thirds as much — bad runs end on their own. ",
+  `The change itself is worth a real but modest amount \u2014 about ${fmt(mid.ppg.effect, 1)} points per game, `,
+  "a third of the raw bounce \u2014 and it shows up in chance quality too.",
 ]);
 const tiles = [
   ["Improvement after a mid-season sacking", fmt(mid.ppg.raw_change), `points per game, next ${CE.window} matches vs. last ${CE.window} (n=${mid.ppg.n_treated})`],
   ["Expected anyway", fmt(mid.ppg.counterfactual_change), "from similar teams that kept their coach"],
   ["Effect of the change: chance quality", fmt(mid.xgd.effect), `xG difference per game beyond expectation (95%: ${fmt(mid.xgd.effect_ci95[0])} to ${fmt(mid.xgd.effect_ci95[1])})` + (implied ? ` \u2014 worth about ${fmt(implied.effect)} PPG` : ""), true],
-  ["Effect of the change: points", fmt(mid.ppg.effect), `per game beyond expectation (95%: ${fmt(mid.ppg.effect_ci95[0])} to ${fmt(mid.ppg.effect_ci95[1])}) \u2014 consistent with that, but noisier`],
+  ["Effect of the change: points", fmt(mid.ppg.effect), `per game beyond expectation (95%: ${fmt(mid.ppg.effect_ci95[0])} to ${fmt(mid.ppg.effect_ci95[1])}), after fixtures too`],
 ];
 for (const [label, value, sub, emph] of tiles) {
   const t = html("div", null, "tile" + (emph ? " emph" : ""));
@@ -303,12 +302,13 @@ para($("effect-text"), [
   "Each blue dot is a coaching change during a season: how many points per game the team took in the ",
   `${CE.window} matches before it, and how much that changed over the next ${CE.window}. The orange line is the same comparison `,
   "at moments when teams in the same position did not change coach — it slopes down because bad runs recover and good runs fade. ",
-  "Sackings sit only slightly above it on average. The adjustment also accounts for expected goals (xG, the quality of chances created and conceded): ",
-  "a team losing despite creating good chances was due to recover anyway. \u201cThe change\u201d means everything that changes at that moment \u2014 ",
+  "Sackings sit above it on average. The adjustment also accounts for expected goals (xG, the quality of chances created and conceded) \u2014 ",
+  "a team losing despite creating good chances was due to recover anyway \u2014 and for how hard the fixtures before and after were. ",
+  "\u201cThe change\u201d means everything that changes at that moment \u2014 ",
   "a January signing or players returning from injury included \u2014 not the new coach alone. ",
   ...(CE.results.mid_season_no_window_after && CE.results.mid_season_no_window_after.xgd.n_treated
-    ? [`New signings don't seem to be the main driver: in the ${CE.results.mid_season_no_window_after.xgd.n_treated} sackings with no transfer window afterwards (squad frozen), `,
-       `chance quality still improved ${fmt(CE.results.mid_season_no_window_after.xgd.effect)} per game beyond expectation.`]
+    ? [`New signings don't seem to be the main driver: in the ${CE.results.mid_season_no_window_after.ppg.n_treated} sackings with no transfer window afterwards (squad frozen), `,
+       `points still improved ${fmt(CE.results.mid_season_no_window_after.ppg.effect)} per game beyond expectation.`]
     : []),
 ]);
 $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.ppg.n_control_windows.toLocaleString("en")} comparison windows. Hover a dot for the details.`;

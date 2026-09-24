@@ -20,7 +20,7 @@ headline findings, the [README](../README.md).
 | Results, formations | [FBref](https://fbref.com) | `soccerdata.FBref` (headless Chrome via seleniumbase) |
 | xG, PPDA (pressing), deep completions | [Understat](https://understat.com) | `soccerdata.Understat` |
 | Coach tenure dates | Transfermarkt "Trainerhistorie" pages | `src/fetch_coach_history.py` (custom scraper) + manual CSV fallback |
-| Betting odds | [football-data.co.uk](https://www.football-data.co.uk) | `soccerdata.MatchHistory` |
+| Betting odds (market benchmark, fixture difficulty) | [football-data.co.uk](https://www.football-data.co.uk) | `soccerdata.MatchHistory` via `src/fetch_odds.py` |
 
 `soccerdata` covers no manager-history source, so coach tenures are the one piece
 scraped by hand. English Wikipedia was tried first, but Bundesliga clubs mostly don't
@@ -37,6 +37,18 @@ working, `transfermarkt.com` began answering every request with an AWS WAF chall
 first time this happened, the scraper silently wrote a 1-row file over ~1,600 real
 rows, which removed the coach from 98% of matches without a single crash anywhere in
 the chain. That incident is why every fetcher now has an overwrite guard (below).
+
+**FBref throttles long browser sessions.** Extending the data back to 2014-15 meant
+downloading ~90 more FBref pages. The first ~20 came at ~10 seconds each; after that,
+FBref's Cloudflare protection challenged every page, and each one cost a ~5-minute
+timeout before a retry got through (it's the browser *session* that gets flagged — a
+fresh browser was fast again). `fetch_fbref.py` now starts a fresh browser every 12
+downloaded pages. The weekly refresh only downloads the current season (~1 page per
+club), so it's rarely affected.
+
+**Odds: the format changed in 2019-20.** Earlier seasons on football-data.co.uk carry the
+market average as Betbrain's `BbAvH/D/A` and have no closing odds; `fetch_odds.py` folds
+those into the current `AvgH/D/A` columns.
 
 **Odds: Pinnacle stops in January 2026.** football-data.co.uk's Pinnacle columns end
 mid-January 2026, leaving them on only about half of the test set. The market
@@ -56,7 +68,12 @@ the config is resolved live:
 - **Transfermarkt ids** — `src/transfermarkt_search.py` searches Transfermarkt and
   takes the first non-reserve, non-youth club link. An auto-resolved id is verified
   strictly against the fetched page's `<title>`: a mismatch rejects the guess rather
-  than trusting it. Validated against all 12 ids already known correct.
+  than trusting it. Validated against all 12 ids already known correct. That check has
+  already paid for itself: when the data was extended back to 2014-15, the search for
+  "Nürnberg" returned Transfermarkt id 105 — SV Darmstadt 98's page. The title check
+  rejected it, so Nürnberg's matches weren't silently given Darmstadt's coaches; the
+  correct id (4) was verified by hand and added to the config. Hannover 96 and Ingolstadt
+  resolved correctly on their own.
 - **Understat names** — `src/team_name_matcher.py` fuzzy-matches against FBref's team
   list, refusing to guess when the best match is weak or too close to the runner-up.
   Validated 28/28 against the known pairs, including "FC Cologne" → "Köln". One
@@ -158,6 +175,13 @@ visibly *look* wrong for:
 - **Overwrite guards and auto-resolution** (`test_data_guard.py`,
   `test_fetch_coach_history.py`, `test_team_name_matcher.py`) — including a direct
   regression test for the Transfermarkt blocking incident.
+- **Fixture difficulty** (`test_fixture_difficulty.py`) — a fixture's rating depends only
+  on the opponent and venue, never on the team itself; and with a planted "sacked teams
+  got easier fixtures" confound, the unadjusted estimate is inflated while the adjusted one
+  recovers the planted effect.
+- **FBref browser restarts** (`test_fetch_fbref.py`) — a fresh browser every 12 downloaded
+  pages, for both backfill-shaped and weekly-shaped runs (verified to fail with the
+  restarts disabled).
 - **`predict.py`** (`test_predict.py`) and the coach-bounce join (`test_coach_bounce.py`).
 - **The results page** (`test_site.py`) — scraped names embedded in the page can't
   break out of its `<script>` block (checked by removing the escaping and watching the
@@ -180,8 +204,8 @@ GitHub Actions:
 
 Everything tunable is in `config.py`:
 
-- `SEASONS` — how far back to pull (default 2019-20 through the ongoing 2026-27).
-  Formation and PPDA coverage is reliable from about 2014-15.
+- `SEASONS` — how far back to pull (2014-15 through the ongoing 2026-27; 2014-15 is as far
+  as Understat's xG goes, and FBref has formations from 2015-16).
 - `IMPACT_WINDOW` — matches before and after a coaching change (default 8).
 - `FEATURE_ROLLING_WINDOW`, `TEST_SEASONS`, `MODEL_DIR` — rolling-form window, held-out
   seasons, model location.

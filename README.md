@@ -1,52 +1,54 @@
 # Does sacking the coach work?
 
 A Bundesliga analytics project: coaching changes measured against regression to the
-mean, and match forecasts benchmarked against the betting market. Eight seasons
-(2019-20 to 2026-27), 2,178 matches, four scraped sources.
+mean, and match forecasts benchmarked against the betting market. Thirteen seasons
+(2014-15 to 2026-27), 3,708 matches, four scraped sources.
 
 [![CI](https://github.com/FPN1997/bundesliga-coach-impact/actions/workflows/ci.yml/badge.svg)](https://github.com/FPN1997/bundesliga-coach-impact/actions/workflows/ci.yml)
 
 **→ [Interactive results page](https://fpn1997.github.io/bundesliga-coach-impact/)** —
-every mid-season sacking since 2019, the forecast benchmark, and forecasts for the next
+every mid-season sacking since 2014, the forecast benchmark, and forecasts for the next
 matchday.
 
 ## Findings
 
-### Most of the "new coach bounce" happens anyway
+### A new coach is worth about +0.2 points per game — a third of the "bounce"
 
-Teams that sack their coach mid-season take **+0.50 points per game** more over the next
+Teams that sack their coach mid-season take **+0.54 points per game** more over the next
 8 matches than over the previous 8. But teams in the same slump that *kept* their coach
-improved **+0.40** — bad runs end on their own. So the coaching change itself is worth
-far less than the raw bounce suggests. Measured two ways:
+improved **+0.35** anyway, once the run of fixtures is accounted for too — bad runs end on
+their own. That leaves **+0.19 points per game** for the change itself (95% interval
++0.04 to +0.30), across 65 mid-season sackings from 2014-15 to 2026-27. Two independent
+measures agree:
 
+- **Points:** +0.19 per game beyond expectation (+0.04 to +0.30).
 - **Chance quality** (xG difference: the quality of chances created minus conceded, which
-  doesn't depend on whether shots happen to go in) improves **+0.32 per game** beyond
-  expectation (95% interval +0.08 to +0.56) — a clear effect.
-- **Points** improve **+0.09 per game** beyond expectation (95% interval −0.06 to +0.23).
-  That's consistent with the xG gain, which is worth about +0.18 points per game, but
-  too noisy to confirm on its own: over 8 matches, luck in finishing alone moves points
-  per game by about ±0.37.
+  doesn't depend on whether shots happen to go in): **+0.31 per game** beyond expectation
+  (+0.11 to +0.46) — worth about +0.18 points per game.
 
-Most likely, then, a real but modest effect of roughly +0.1 to +0.2 points per game.
-"The coaching change" here means everything that changes at that moment, not the new
-coach alone. New signings don't seem to be the main driver: for the 15 sackings where no
-transfer window was open afterwards, so the squad was frozen, chance quality still
-improved by about +0.27 per game ([details](docs/results-in-depth.md#the-effect-of-a-coaching-change)).
+It isn't just an easier run of fixtures (sacked teams' next 8 fixtures were barely easier
+than usual, and adjusting for them changes the estimate from +0.16 to +0.19), and it isn't
+mainly new signings: for the 39 sackings with no transfer window open afterwards — a frozen
+squad — points still improved +0.20 per game beyond expectation. Summer appointments
+show no clear effect (+0.05, −0.07 to +0.15). "The change" still means everything that
+changes at that moment, not the new coach alone
+([details](docs/results-in-depth.md#the-effect-of-a-coaching-change)).
 
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 
 *Each blue dot is a mid-season sacking; the orange line is what teams in the same
 position that kept their coach did. The comparison adjusts for points and xG before the
-change, and the intervals resample whole teams. Method:
+change and for the difficulty of the fixtures before and after, and the intervals
+resample whole teams. Method:
 [results-in-depth.md](docs/results-in-depth.md#the-effect-of-a-coaching-change).*
 
-### The match forecasts get 70% of the way to the betting market
+### The match forecasts get 72% of the way to the betting market
 
-On 317 held-out matches, a logistic regression on rolling form, xG, pressing and coach
-tenure closes **70% of the gap** between naive base rates and the closing betting odds,
+On 321 held-out matches, a logistic regression on rolling form, xG, pressing and coach
+tenure closes **72% of the gap** between naive base rates and the closing betting odds,
 measured by ranked probability score (the standard for football forecasts). A tuned
-Random Forest does worse, at 60%: it was trained to catch draws, and overestimates them
-(33% on average, against a real draw rate of 24%).
+Random Forest does much worse, at 46%: it was trained to catch draws, and overestimates
+them (33% on average, against a real draw rate of 24%).
 
 ![Forecast skill vs. the betting market, and calibration](docs/market_benchmark.png)
 
@@ -54,10 +56,19 @@ Random Forest does worse, at 60%: it was trained to catch draws, and overestimat
 
 An earlier run ranked Optuna-tuned Random Forest as the clear best pre-match model
 (macro-F1 0.522). After a week's data refresh — the tuning itself is deterministic — it
-scored 0.491, and the other tuning conclusions reshuffled too. At this sample size,
-differences of a few hundredths between tuning methods aren't real; the untuned models
-are as good as anything. The robust comparison is the probabilistic benchmark above.
+scored 0.491, and with five more seasons of training data 0.492; the other tuning
+conclusions reshuffled each time. At this sample size, differences of a few hundredths
+between tuning methods aren't real; the untuned models are as good as anything. The
+robust comparison is the probabilistic benchmark above.
 ([details](docs/results-in-depth.md#hyperparameter-tuning))
+
+### A coach's track record doesn't predict the size of the bounce
+
+For 67 changes where the incoming coach had coached at least 10 earlier matches in the
+data, a model can predict how big the points swing will be (leave-one-out R² +0.28) — but
+all of that comes from how bad the run was beforehand, i.e. regression to the mean again
+(team form alone: +0.33). The incoming coach's own record adds nothing (on its own: −0.04).
+([details](docs/results-in-depth.md#coach-bounce-predictor))
 
 ### Formation matchups
 
@@ -78,6 +89,7 @@ flowchart LR
     DS --> FM[Formation matchups]
     DS --> FC[Match forecasts]
     FD[football-data.co.uk<br/>betting odds] --> MB[Market benchmark]
+    FD -->|fixture difficulty| CE
     FC --> MB
     CE & FM & FC & MB --> WEB[Results page]
 ```
@@ -132,7 +144,7 @@ reproduces the exact tested environment.
 
 ## Engineering
 
-- **74 tests** on synthetic data, covering leak-safety, the time split, the coaching-change
+- **81 tests** on synthetic data, covering leak-safety, the time split, the coaching-change
   estimator (a planted effect must be recovered, and zero reported when there is none),
   the scoring rules, the scraper guards and name resolution. CI runs lint and tests on
   Python 3.11 and 3.13, plus a weekly end-to-end run of the real pipeline on a fixture
@@ -145,10 +157,10 @@ reproduces the exact tested environment.
 
 ## Limitations
 
-- **Small samples.** 39 mid-season sackings; 317 test matches. The intervals are wide, and
+- **Small samples.** 65 mid-season sackings; 321 test matches. The intervals are wide, and
   the write-up says so wherever it matters.
-- **Observational data.** Clubs don't sack at random. The adjustment covers recent points
-  and xG, not everything a club's board knows.
+- **Observational data.** Clubs don't sack at random. The adjustment covers recent points,
+  xG and fixture difficulty, not everything a club's board knows.
 - **Data freshness depends on the scrapers.** FBref, Understat and Transfermarkt can
   change or block access without notice; that has already happened once
   (Transfermarkt's `.com` domain).
