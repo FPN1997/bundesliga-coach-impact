@@ -13,6 +13,15 @@ Two things verified against live data that shape this file (see README
    `round` value ("Matchweek 1", "Matchweek 2", ...) -- everything else
    (`round` like "Round of 64", "Group stage") gets filtered out.
 
+FBref sits behind Cloudflare, which starts challenging a browser session
+after roughly 20 page loads -- each challenged page then costs a ~5-minute
+timeout before soccerdata's retry gets through. A fresh browser session is
+fast again, so the fetch restarts the browser every PAGES_PER_BROWSER_SESSION
+downloaded pages. (Found during the 2014-15 backfill: ~10 s per page for the
+first ~20 pages, then ~5 min per page; a restart brought back ~10 s.) The
+weekly refresh only downloads the current season (~1 page per club), so it
+rarely restarts; a multi-season backfill restarts roughly once per club.
+
 Guarded against silently regressing (see src/data_guard.py) two ways: a
 minimum fraction of requested teams must actually fetch successfully
 (row count alone is a weak signal here, since FBref lists a whole season's
@@ -26,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -39,6 +49,12 @@ log = logging.getLogger(__name__)
 
 LEAGUE_ROUND_RE = re.compile(config.FBREF_LEAGUE_ROUND_PATTERN)
 GAME_ID_RE = re.compile(r"/en/matches/([0-9a-f]+)/")
+PAGES_PER_BROWSER_SESSION = 12  # comfortably under Cloudflare's ~20-page threshold
+
+
+def _pages_written_since(fbref: sd.FBref, since: float) -> int:
+    """Match-log pages downloaded (created or re-downloaded) since `since`."""
+    return sum(1 for f in Path(fbref.data_dir).glob("matchlogs_*") if f.stat().st_mtime >= since)
 
 
 def _teams_for_season(fbref: sd.FBref) -> list[str]:
@@ -55,7 +71,12 @@ def fetch_fbref_matches() -> pd.DataFrame:
               len(teams), config.SEASONS)
 
     frames = []
+    session_start = time.time()
     for team in teams:
+        if _pages_written_since(fbref, session_start) >= PAGES_PER_BROWSER_SESSION:
+            log.info("Restarting the browser (Cloudflare throttles long FBref sessions)")
+            fbref._init_webdriver()  # quits the old browser, starts a fresh one
+            session_start = time.time()
         try:
             df = fbref.read_team_match_stats(stat_type="schedule", team=team)
         except Exception as exc:  # one bad team shouldn't kill the run
