@@ -185,7 +185,30 @@ MODEL_DIR = "outputs/models"
 # exactly why this got tested rather than just bumped and left undocumented.
 N_CV_SPLITS = 10
 
-# Embargo (in rows) between each TimeSeriesSplit fold's train and validation
+# Bundesliga registration periods ("Wechselperioden"), when clubs can sign
+# players -- used by src/coach_change_effect.py to separate coaching changes
+# that could coincide with new signings from ones where the squad was
+# frozen. Deliberately a little WIDE (a superset of each year's actual
+# dates), so a window labelled "no transfer window" really had none:
+#   - winter: 1 Jan - 3 Feb. Actual deadlines varied between 31 Jan and
+#     3 Feb (verified: 2021 ran 2 Jan - 1 Feb, 2025 1 Jan - 3 Feb, 2026
+#     closed 2 Feb; sources: dfl.de, bundesliga.com).
+#   - summer: 1 Jul - 2 Sep. Deadlines were 31 Aug - 1 Sep (e.g. 2023:
+#     1 Jul - 1 Sep; 2025 closed 1 Sep).
+#   - exceptions: 2020's summer window was extended to 5 Oct (COVID), and a
+#     special window ran 1-10 Jun 2025 for the FIFA Club World Cup.
+# Unattached players can be signed outside these windows in Germany; that's
+# rare enough mid-season to ignore here.
+TRANSFER_WINDOWS = [
+    window
+    for year in range(2019, 2028)
+    for window in (
+        (f"{year}-01-01", f"{year}-02-03"),
+        (f"{year}-07-01", "2020-10-05" if year == 2020 else f"{year}-09-02"),
+    )
+] + [("2025-06-01", "2025-06-10")]
+
+
 # slice, for src/tune_hyperparameters.py's gap= option (`bundesliga tune --method embargoed`).
 # The training feature table has one row per team per match (~2x a raw
 # fixture list, home + away), and a Bundesliga matchday is 9 fixtures ->

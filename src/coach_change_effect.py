@@ -37,6 +37,13 @@ Method (regression adjustment on control windows + a team-level cluster bootstra
     discard 11 of 39 mid-season sackings -- the worst runs, where control
     windows are rare -- i.e. exactly the cases the question is about.
     The effect is the average of (actual change - expected change).
+  - Transfer windows: "the change" is everything that happens at that
+    moment, including new signings. Each window records whether a
+    registration period (config.TRANSFER_WINDOWS) is open during the
+    matches after the change; the mid-season effect is also estimated
+    separately for changes with and without one, each against controls of
+    the same kind. Where no window follows the change, the squad was
+    frozen, so signings can't be what drives the effect there.
   - Uncertainty: control windows from the same team overlap and are
     strongly correlated, so a naive bootstrap over windows would
     understate the uncertainty badly. The bootstrap resamples whole
@@ -63,6 +70,12 @@ log = logging.getLogger(__name__)
 
 WINDOW = config.IMPACT_WINDOW
 N_BOOTSTRAP = 2000
+_TRANSFER_WINDOWS = [(pd.Timestamp(a), pd.Timestamp(b)) for a, b in config.TRANSFER_WINDOWS]
+
+
+def transfer_window_open(start: pd.Timestamp, end: pd.Timestamp) -> bool:
+    """True if any registration period overlaps [start, end]."""
+    return any(a <= end and start <= b for a, b in _TRANSFER_WINDOWS)
 
 
 def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
@@ -96,6 +109,9 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 "coach_out": coach[i - 1] if kind == "treated" else None,
                 "coach_in": coach[i] if kind == "treated" else None,
                 "in_season": season[i - window] == season[i + window - 1],
+                # could new signings arrive during the matches after the change?
+                "window_after": transfer_window_open(pd.Timestamp(dates[i]),
+                                                     pd.Timestamp(dates[i + window - 1])),
                 "ppg_before": points[i - window:i].mean(),
                 "ppg_after": points[i:i + window].mean(),
                 "xgd_before": np.nanmean(xgd[i - window:i]),
@@ -169,8 +185,15 @@ class _AdjustedEstimator:
 def estimate_effects(windows: pd.DataFrame) -> dict:
     results: dict = {"window_matches": WINDOW, "method": "regression adjustment on controls",
                      "bootstrap_resamples": N_BOOTSTRAP, "bootstrap_unit": "team"}
-    for label, in_season in [("mid_season", True), ("off_season", False)]:
-        subset = windows[windows["in_season"] == in_season]
+    groups = [
+        ("mid_season", windows["in_season"]),
+        ("off_season", ~windows["in_season"]),
+        # mid-season only, split by whether signings were possible after the change
+        ("mid_season_window_after", windows["in_season"] & windows["window_after"]),
+        ("mid_season_no_window_after", windows["in_season"] & ~windows["window_after"]),
+    ]
+    for label, mask in groups:
+        subset = windows[mask]
         results[label] = {}
         if not ((subset["kind"] == "treated").any() and (subset["kind"] == "control").any()):
             results[label] = {"ppg": {"n_treated": 0}, "xgd": {"n_treated": 0}}
@@ -299,7 +322,7 @@ def run() -> dict:
     else:
         log.warning("Not enough coaching changes of both kinds to plot (tiny dataset?) -- skipping plot.")
 
-    for label in ("mid_season", "off_season"):
+    for label in ("mid_season", "off_season", "mid_season_window_after", "mid_season_no_window_after"):
         r = results[label]["ppg"]
         if not r.get("n_treated"):
             continue

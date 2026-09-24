@@ -102,3 +102,23 @@ def test_bootstrap_ci_brackets_the_estimate_and_is_deterministic():
     assert a == b
     lo, hi = a["effect_ci95"]
     assert lo <= point <= hi
+
+
+@pytest.mark.parametrize("start,end,expected", [
+    ("2023-10-07", "2023-12-16", False),  # autumn: squad frozen
+    ("2023-11-25", "2024-01-20", True),   # runs into the January window
+    ("2024-02-10", "2024-04-06", False),  # after the winter deadline
+    ("2021-08-21", "2021-10-02", True),   # starts before the summer deadline
+    ("2021-09-11", "2021-11-06", False),  # after it
+    ("2020-09-19", "2020-11-07", True),   # 2020's summer window ran to 5 Oct (COVID)
+])
+def test_transfer_window_open(start, end, expected):
+    assert cce.transfer_window_open(pd.Timestamp(start), pd.Timestamp(end)) is expected
+
+
+def test_windows_record_whether_a_transfer_window_follows_the_change():
+    # _team() dates are weekly from 2023-08-01; the change at index 8 falls
+    # on 2023-09-26, and its 3-match after-half ends 2023-10-10: no window.
+    df = _team(["A"] * 8 + ["B"] * 8)
+    w = cce.build_windows(df, window=W)
+    assert not w.loc[w["kind"] == "treated", "window_after"].iloc[0]

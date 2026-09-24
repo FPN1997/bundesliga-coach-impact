@@ -305,7 +305,11 @@ para($("effect-text"), [
   "at moments when teams in the same position did not change coach — it slopes down because bad runs recover and good runs fade. ",
   "Sackings sit only slightly above it on average. The adjustment also accounts for expected goals (xG, the quality of chances created and conceded): ",
   "a team losing despite creating good chances was due to recover anyway. \u201cThe change\u201d means everything that changes at that moment \u2014 ",
-  "a January signing or players returning from injury included \u2014 not the new coach alone.",
+  "a January signing or players returning from injury included \u2014 not the new coach alone. ",
+  ...(CE.results.mid_season_no_window_after && CE.results.mid_season_no_window_after.xgd.n_treated
+    ? [`New signings don't seem to be the main driver: in the ${CE.results.mid_season_no_window_after.xgd.n_treated} sackings with no transfer window afterwards (squad frozen), `,
+       `chance quality still improved ${fmt(CE.results.mid_season_no_window_after.xgd.effect)} per game beyond expectation.`]
+    : []),
 ]);
 $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.ppg.n_control_windows.toLocaleString("en")} comparison windows. Hover a dot for the details.`;
 (function scatter() {

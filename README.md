@@ -28,8 +28,10 @@ far less than the raw bounce suggests. Measured two ways:
   per game by about ±0.37.
 
 Most likely, then, a real but modest effect of roughly +0.1 to +0.2 points per game.
-"The coaching change" here means everything that changes at that moment — January
-signings or players returning from injury included — not the new coach alone.
+"The coaching change" here means everything that changes at that moment, not the new
+coach alone. New signings don't seem to be the main driver: for the 15 sackings where no
+transfer window was open afterwards, so the squad was frozen, chance quality still
+improved by about +0.27 per game ([details](docs/results-in-depth.md#the-effect-of-a-coaching-change)).
 
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 
@@ -130,7 +132,7 @@ reproduces the exact tested environment.
 
 ## Engineering
 
-- **67 tests** on synthetic data, covering leak-safety, the time split, the coaching-change
+- **74 tests** on synthetic data, covering leak-safety, the time split, the coaching-change
   estimator (a planted effect must be recovered, and zero reported when there is none),
   the scoring rules, the scraper guards and name resolution. CI runs lint and tests on
   Python 3.11 and 3.13, plus a weekly end-to-end run of the real pipeline on a fixture

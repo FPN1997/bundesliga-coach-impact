@@ -75,6 +75,34 @@ show no clear effect on either measure.
 signing, players returning from injury, a softer run of fixtures (opponent strength
 isn't adjusted for) — not the new coach alone.
 
+**Could it just be new signings?** One of those can be tested. German clubs can only
+register players during two windows, winter (January to the start of February) and
+summer (July to the start of September; 2020's ran to 5 October), listed with sources in
+`config.TRANSFER_WINDOWS`. So the mid-season sackings split into those where a window was
+open during the 8 matches after the change, and those where it wasn't and the squad was
+frozen — each compared against control windows of the same kind:
+
+| Mid-season sackings | n | Points effect | xG difference effect |
+|---|---|---|---|
+| Window open after the change | 24 | +0.10 (−0.09 to +0.29) | +0.35 (+0.05 to +0.64) |
+| No window after the change (squad frozen) | 15 | +0.07 (−0.14 to +0.32) | +0.27 (−0.12 to +0.68) |
+
+The effect doesn't disappear when no one new could arrive: chance quality still
+improves by about +0.27 per game with a frozen squad. It's a little larger when signings
+were possible, consistent with them adding something on top, but the two groups are
+within noise of each other, and 15 sackings is too few for the frozen group's interval
+to exclude zero on its own. So signings don't look like the main driver — but splitting
+the sample doesn't make the estimate more precise; it trades precision for ruling out
+one explanation. Note that the comparison already absorbs the *usual* January effect,
+since control windows from the same period include other clubs' January signings too;
+what it can't absorb is a sacking club signing more than usual.
+
+What would genuinely sharpen the estimate: more data (the sources reliably go back to
+2014-15, which should roughly add 5 seasons' worth of sackings and narrow the intervals by
+about a quarter); adjusting for fixture difficulty, using the betting odds already in the
+project; and actual squad data (minutes played by new signings, injuries) from
+Transfermarkt.
+
 The biggest positive surprise in the data is Xabi Alonso replacing Gerardo Seoane at
 Leverkusen in October 2022: +1.38 PPG against an expected +0.62.
 
