@@ -179,6 +179,7 @@ def main() -> None:
         # importing late isn't required for correctness, but keeps the
         # override block above visually self-contained regardless.
         from src.build_dataset import build_dataset
+        from src.coach_change_effect import run as estimate_coach_change_effect
         from src.coach_impact import compute_coach_impact
         from src.features import build_feature_table
         from src.formation_matrix import build_formation_matrix, coach_preferred_formations
@@ -196,6 +197,12 @@ def main() -> None:
         impact = compute_coach_impact()
         assert len(impact) == 1, f"expected exactly 1 coaching change (Fixture United), got {len(impact)}"
         assert impact.iloc[0]["team"] == "Fixture United"
+
+        print("== coach_change_effect ==")
+        # The fixture's single change is a summer appointment, so the
+        # mid-season estimate must come back empty rather than crash.
+        effect = estimate_coach_change_effect()
+        assert effect["mid_season"]["ppg"]["n_treated"] == 0
 
         print("== formation_matrix ==")
         matrix = build_formation_matrix()

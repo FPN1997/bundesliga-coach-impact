@@ -15,6 +15,7 @@ import argparse
 import logging
 
 from src.build_dataset import build_dataset
+from src.coach_change_effect import run as estimate_coach_change_effect
 from src.coach_impact import compute_coach_impact
 from src.fetch_coach_history import fetch_coach_history
 from src.fetch_fbref import fetch_fbref_matches
@@ -46,6 +47,7 @@ def main() -> None:
 
     log.info("Step 5/5: Analysis")
     compute_coach_impact()
+    estimate_coach_change_effect()
     build_formation_matrix()
     coach_preferred_formations()
 
