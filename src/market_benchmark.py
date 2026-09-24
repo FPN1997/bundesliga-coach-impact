@@ -61,6 +61,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 import config
+from src import viz_style as vs
 from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
 from src.features import build_feature_table
 from src.outcome_predictor import FORMATION_COLS_PREMATCH, NUMERIC, _season_code, _split
@@ -224,7 +225,7 @@ def run(refresh_odds: bool = False) -> dict:
     if default_path.exists():
         rf = joblib.load(default_path)
         le = joblib.load(Path(config.MODEL_DIR) / "label_encoder_prematch.joblib")
-        forecasts["Random Forest (predict.py default, class-balanced)"] = _team_probs_to_hda(
+        forecasts["Random Forest (Optuna-tuned, class-balanced)"] = _team_probs_to_hda(
             rf.predict_proba(test[X_cols]), le.classes_)
     else:
         log.warning("%s not found -- skipping it (run the Optuna pre-match tuning first)", default_path)
@@ -288,49 +289,52 @@ def run(refresh_odds: bool = False) -> dict:
 
 # --- plot ---------------------------------------------------------------
 
-_SLOTS = ["#2a78d6", "#eb6834", "#1baf7a"]  # validated categorical slots 1-3 (all-pairs safe)
-_INK, _INK_2, _GRID, _SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 
 def plot(forecasts: dict[str, np.ndarray], y: np.ndarray, results: dict, out_path: Path) -> None:
     import matplotlib.pyplot as plt
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.0), width_ratios=[1, 1.15],
-                                   facecolor=_SURFACE)
+                                   facecolor=vs.SURFACE)
     for ax in (ax1, ax2):
-        ax.set_facecolor(_SURFACE)
+        ax.set_facecolor(vs.SURFACE)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         for side in ("left", "bottom"):
-            ax.spines[side].set_color(_GRID)
-        ax.tick_params(colors=_INK_2, labelsize=9)
+            ax.spines[side].set_color(vs.GRID)
+        ax.tick_params(colors=vs.INK_2, labelsize=9)
         ax.set_axisbelow(True)
 
     # Left: how far each forecaster gets from base rates to the closing market
     names = [n for n in results["forecasters"] if not n.startswith("Base rates")]
     shares = [100 * results["forecasters"][n]["share_of_gap_to_market"] for n in names]
     ys = np.arange(len(names))[::-1]
-    ax1.barh(ys, shares, height=0.55, color=_SLOTS[0])
+    ax1.barh(ys, shares, height=0.55, color=vs.SERIES[0])
     for yy, v in zip(ys, shares, strict=True):
         ax1.annotate(f"{v:.0f}%", (max(v, 0), yy), xytext=(4, 0), textcoords="offset points",
-                     va="center", fontsize=9, color=_INK)
-    ax1.set_yticks(ys, [n.replace(" (", "\n(") for n in names], fontsize=9, color=_INK)
-    ax1.axvline(0, color=_INK_2, linewidth=1)
-    ax1.axvline(100, color=_INK_2, linewidth=1, linestyle=(0, (1, 2)))
-    ax1.grid(axis="x", color=_GRID, linewidth=1)
+                     va="center", fontsize=9, color=vs.INK)
+    ax1.set_yticks(ys, [n.replace(" (", "\n(") for n in names], fontsize=9, color=vs.INK)
+    ax1.axvline(0, color=vs.INK_2, linewidth=1)
+    ax1.axvline(100, color=vs.INK_2, linewidth=1, linestyle=(0, (1, 2)))
+    ax1.grid(axis="x", color=vs.GRID, linewidth=1)
     ax1.set_xlim(min(0, min(shares)) - 5, 115)
     ax1.set_xlabel("% of the way from base rates to the closing odds (by RPS)",
-                   color=_INK_2, fontsize=10)
+                   color=vs.INK_2, fontsize=10)
     ax1.set_title(f"Forecast skill vs. the betting market\n{results['n_matches']} test matches, "
                   f"{' + '.join(results['test_seasons'])}",
-                  loc="left", fontsize=11.5, color=_INK, fontweight="semibold")
+                  loc="left", fontsize=11.5, color=vs.INK, fontweight="semibold")
 
     # Right: reliability -- every (match, outcome) probability, binned
-    ax2.plot([0, 1], [0, 1], color=_INK_2, linewidth=1, linestyle=(0, (1, 2)))
+    ax2.plot([0, 1], [0, 1], color=vs.INK_2, linewidth=1, linestyle=(0, (1, 2)))
     series = [n for n in forecasts if n.startswith(("Logistic", "Random Forest", MARKET))]
     bins = np.linspace(0, 1, 11)
     onehot = np.eye(3)[y].ravel()
-    for color, name in zip(_SLOTS, series, strict=False):
+    def colour(name: str) -> str:  # same mapping as the published page
+        return vs.SERIES[0] if name.startswith("Logistic") else vs.SERIES[1] if name.startswith("Random") \
+            else vs.SERIES[2]
+
+    for name in series:
+        color = colour(name)
         p = forecasts[name].ravel()
         which = np.digitize(p, bins[1:-1])
         xs, fs = [], []
@@ -340,18 +344,18 @@ def plot(forecasts: dict[str, np.ndarray], y: np.ndarray, results: dict, out_pat
                 xs.append(p[m].mean())
                 fs.append(onehot[m].mean())
         ax2.plot(xs, fs, color=color, linewidth=2, marker="o", markersize=6,
-                 markeredgecolor=_SURFACE, markeredgewidth=2, label=name)
+                 markeredgecolor=vs.SURFACE, markeredgewidth=2, label=name)
     ax2.set_xlim(0, 1.0)
     ax2.set_ylim(0, 1.0)
-    ax2.grid(color=_GRID, linewidth=1)
-    ax2.set_xlabel("Forecast probability (bins of 0.1, >= 15 forecasts each)", color=_INK_2, fontsize=10)
-    ax2.set_ylabel("How often it actually happened", color=_INK_2, fontsize=10)
-    ax2.legend(frameon=False, fontsize=8.5, loc="upper left", labelcolor=_INK)
+    ax2.grid(color=vs.GRID, linewidth=1)
+    ax2.set_xlabel("Forecast probability (bins of 0.1, >= 15 forecasts each)", color=vs.INK_2, fontsize=10)
+    ax2.set_ylabel("How often it actually happened", color=vs.INK_2, fontsize=10)
+    ax2.legend(frameon=False, fontsize=8.5, loc="upper left", labelcolor=vs.INK)
     ax2.set_title("Calibration\non the diagonal = forecasts mean what they say",
-                  loc="left", fontsize=11.5, color=_INK, fontweight="semibold")
+                  loc="left", fontsize=11.5, color=vs.INK, fontweight="semibold")
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, facecolor=_SURFACE)
+    fig.savefig(out_path, dpi=150, facecolor=vs.SURFACE)
     plt.close(fig)
     log.info("Saved plot -> %s", out_path)
 

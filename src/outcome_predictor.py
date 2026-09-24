@@ -64,6 +64,7 @@ from sklearn.utils.class_weight import compute_sample_weight
 from xgboost import XGBClassifier
 
 import config
+from src import viz_style as vs
 from src.features import build_feature_table
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -276,16 +277,31 @@ def _formation_matchup_predicted(
               len(grouped), out_csv)
 
     pivot = grouped.pivot(index=form_col, columns=opp_form_col, values="predicted_win_prob")
-    fig, ax = plt.subplots(figsize=(1.2 * pivot.shape[1] + 2, 1.0 * pivot.shape[0] + 2))
-    sns.heatmap(pivot, annot=True, fmt=".2f", cmap="RdYlGn", center=0.33,
-                cbar_kws={"label": "Model-predicted P(win)"}, ax=ax)
-    ax.set_xlabel(f"Opponent {opp_form_col}")
-    ax.set_ylabel(f"Team {form_col}")
-    ax.set_title(f"Predicted win probability by formation matchup\n"
-                 f"(form/home-advantage-adjusted; cells with < {min_samples} matches hidden)")
+    # Same readability rule as formation_matrix.py's raw heatmap: only
+    # formations fielded often, ordered by how often (the CSV keeps all).
+    from src.formation_matrix import PLOT_MIN_FORMATION_MATCHES, common_formations
+    common = common_formations(df[form_col], pivot)
+    pivot = pivot.loc[common, common]
+    # Centred on the actual overall win rate, so grey = "an average matchup".
+    base_win_rate = (df["result"] == "W").mean()
+    fig, ax = plt.subplots(figsize=(0.95 * pivot.shape[1] + 2.5, 0.75 * pivot.shape[0] + 2),
+                           facecolor=vs.SURFACE)
+    sns.heatmap(pivot, annot=True, fmt=".2f", cmap=vs.diverging_cmap(),
+                norm=vs.centered_norm(pivot.to_numpy(), base_win_rate),
+                linewidths=2, linecolor=vs.SURFACE, annot_kws={"fontsize": 9},
+                cbar_kws={"label": f"Predicted P(win) (overall win rate {base_win_rate:.2f} = grey)"},
+                ax=ax)
+    ax.set_facecolor(vs.SURFACE)
+    ax.tick_params(colors=vs.INK_2, labelsize=9, length=0)
+    which = "recent formation" if "recent" in form_col else "formation"
+    ax.set_xlabel(f"Opponent's {which}", color=vs.INK_2)
+    ax.set_ylabel(f"Team's {which}", color=vs.INK_2)
+    vs.title(ax, "Model-predicted win probability by formation matchup (form- and home-adjusted)\n"
+                 f"formations used {PLOT_MIN_FORMATION_MATCHES}+ times; "
+                 f"blank = fewer than {min_samples} matches")
     fig.tight_layout()
     out_png = Path(config.OUTPUT_DIR) / f"formation_matchup_predicted{variant}.png"
-    fig.savefig(out_png, dpi=150)
+    fig.savefig(out_png, dpi=150, facecolor=vs.SURFACE)
     plt.close(fig)
     log.info("Saved form-adjusted heatmap -> %s", out_png)
 

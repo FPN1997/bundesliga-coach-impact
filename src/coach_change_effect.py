@@ -56,6 +56,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from src import viz_style as vs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -92,6 +93,8 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 "team": team,
                 "date": dates[i],
                 "kind": kind,
+                "coach_out": coach[i - 1] if kind == "treated" else None,
+                "coach_in": coach[i] if kind == "treated" else None,
                 "in_season": season[i - window] == season[i + window - 1],
                 "ppg_before": points[i - window:i].mean(),
                 "ppg_after": points[i:i + window].mean(),
@@ -182,11 +185,6 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
     return results
 
 
-# Validated categorical palette (light mode) -- slot 1
-# for the sackings, slot 2 for the teams that kept their coach, text tokens
-# for everything that is text.
-_SACKED, _KEPT = "#2a78d6", "#eb6834"
-_INK, _INK_2, _GRID, _SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 
 def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
@@ -200,37 +198,37 @@ def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
         pd.cut(ctrl["ppg_before"], bins, include_lowest=True), observed=False).mean()
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.2), width_ratios=[1.55, 1],
-                                   facecolor=_SURFACE)
+                                   facecolor=vs.SURFACE)
     for ax in (ax1, ax2):
-        ax.set_facecolor(_SURFACE)
+        ax.set_facecolor(vs.SURFACE)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         for side in ("left", "bottom"):
-            ax.spines[side].set_color(_GRID)
-        ax.tick_params(colors=_INK_2, labelsize=9)
-        ax.grid(axis="y", color=_GRID, linewidth=1)
+            ax.spines[side].set_color(vs.GRID)
+        ax.tick_params(colors=vs.INK_2, labelsize=9)
+        ax.grid(axis="y", color=vs.GRID, linewidth=1)
         ax.set_axisbelow(True)
 
     # Left: every mid-season sacking vs. what teams in the same spot did anyway
-    ax1.axhline(0, color=_INK_2, linewidth=1)
-    ax1.plot(centers, ctrl_delta.to_numpy(), color=_KEPT, linewidth=2, marker="o", markersize=6,
-             markeredgecolor=_SURFACE, markeredgewidth=2, zorder=3,
+    ax1.axhline(0, color=vs.INK_2, linewidth=1)
+    ax1.plot(centers, ctrl_delta.to_numpy(), color=vs.SERIES[1], linewidth=2, marker="o", markersize=6,
+             markeredgecolor=vs.SURFACE, markeredgewidth=2, zorder=3,
              label=f"Kept their coach (avg of {len(ctrl):,} windows)")
     # 8-match PPG only takes values in steps of 1/8, so sackings stack on
     # identical coordinates -- a small fixed-seed horizontal jitter keeps
     # every one of them visible (within +/-0.04, a third of a step).
     jitter = np.random.default_rng(0).uniform(-0.04, 0.04, len(tr))
-    ax1.scatter(tr["ppg_before"] + jitter, tr["ppg_after"] - tr["ppg_before"], s=55, color=_SACKED,
-                edgecolor=_SURFACE, linewidth=2, zorder=4,
+    ax1.scatter(tr["ppg_before"] + jitter, tr["ppg_after"] - tr["ppg_before"], s=55, color=vs.SERIES[0],
+                edgecolor=vs.SURFACE, linewidth=2, zorder=4,
                 label=f"Sacked their coach mid-season (n={len(tr)})")
-    ax1.set_xlabel("Points per game over the 8 matches before", color=_INK_2, fontsize=10)
-    ax1.set_ylabel("Change in PPG over the next 8 matches", color=_INK_2, fontsize=10)
+    ax1.set_xlabel("Points per game over the 8 matches before", color=vs.INK_2, fontsize=10)
+    ax1.set_ylabel("Change in PPG over the next 8 matches", color=vs.INK_2, fontsize=10)
     ax1.set_xlim(-0.05, 3.0)
-    ax1.legend(frameon=False, fontsize=9, loc="upper right", labelcolor=_INK)
+    ax1.legend(frameon=False, fontsize=9, loc="upper right", labelcolor=vs.INK)
     r = results["mid_season"]["ppg"]
     ax1.set_title(f"Teams that sack their coach improve {r['raw_change']:+.2f} PPG \u2014 "
                   f"but {r['counterfactual_change']:+.2f} of that happens anyway",
-                  loc="left", fontsize=11.5, color=_INK, fontweight="semibold")
+                  loc="left", fontsize=11.5, color=vs.INK, fontweight="semibold")
 
     # Right: the effect left after adjustment, with team-bootstrap 95% CIs
     rows = [("Points per game\nmid-season", results["mid_season"]["ppg"]),
@@ -238,24 +236,24 @@ def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
             ("Points per game\nsummer appointments", results["off_season"]["ppg"]),
             ("xG difference per game\nsummer appointments", results["off_season"]["xgd"])]
     ys = np.arange(len(rows))[::-1]
-    ax2.axvline(0, color=_INK_2, linewidth=1)
+    ax2.axvline(0, color=vs.INK_2, linewidth=1)
     for y, (_, res) in zip(ys, rows, strict=True):
         lo, hi = res["effect_ci95"]
-        ax2.plot([lo, hi], [y, y], color=_INK_2, linewidth=2, solid_capstyle="round")
-        ax2.scatter([res["effect"]], [y], s=60, color=_INK, edgecolor=_SURFACE, linewidth=2, zorder=3)
+        ax2.plot([lo, hi], [y, y], color=vs.INK_2, linewidth=2, solid_capstyle="round")
+        ax2.scatter([res["effect"]], [y], s=60, color=vs.INK, edgecolor=vs.SURFACE, linewidth=2, zorder=3)
         ax2.annotate(f"{res['effect']:+.2f}", (res["effect"], y), xytext=(0, 9),
-                     textcoords="offset points", ha="center", fontsize=9, color=_INK)
-    ax2.set_yticks(ys, [label for label, _ in rows], fontsize=9, color=_INK)
+                     textcoords="offset points", ha="center", fontsize=9, color=vs.INK)
+    ax2.set_yticks(ys, [label for label, _ in rows], fontsize=9, color=vs.INK)
     ax2.grid(axis="y", visible=False)
-    ax2.grid(axis="x", color=_GRID, linewidth=1)
+    ax2.grid(axis="x", color=vs.GRID, linewidth=1)
     ax2.set_xlabel("Effect of the change beyond what was expected\n(95% CI, teams resampled)",
-                   color=_INK_2, fontsize=10)
+                   color=vs.INK_2, fontsize=10)
     ax2.set_title("What's left after adjusting", loc="left", fontsize=11.5,
-                  color=_INK, fontweight="semibold")
+                  color=vs.INK, fontweight="semibold")
     ax2.set_ylim(-0.6, len(rows) - 0.4)
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, facecolor=_SURFACE)
+    fig.savefig(out_path, dpi=150, facecolor=vs.SURFACE)
     plt.close(fig)
     log.info("Saved plot -> %s", out_path)
 
@@ -268,6 +266,17 @@ def run() -> dict:
                     WINDOW)
         return {}
     results = estimate_effects(windows)
+
+    # Per-change expected PPG change, from the control fit for its kind --
+    # "which sackings beat what was expected anyway" (the published results
+    # page ranks them).
+    for label, in_season in [("mid_season", True), ("off_season", False)]:
+        fit = results[label]["ppg"].get("control_fit")
+        rows = (windows["kind"] == "treated") & (windows["in_season"] == in_season)
+        if fit:
+            windows.loc[rows, "ppg_expected_change"] = (
+                fit["intercept"] + fit["ppg_before"] * windows.loc[rows, "ppg_before"]
+                + fit["xgd_before"] * windows.loc[rows, "xgd_before"])
 
     out_dir = Path(config.OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
