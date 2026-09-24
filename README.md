@@ -16,10 +16,20 @@ matchday.
 
 Teams that sack their coach mid-season take **+0.50 points per game** more over the next
 8 matches than over the previous 8. But teams in the same slump that *kept* their coach
-improved **+0.40** — bad runs end on their own. What's left for the new coach, **+0.09
-PPG** (95% interval −0.06 to +0.23), can't be told apart from zero. How the team *plays*
-does change: xG difference improves **+0.32 per game** beyond expectation (95% interval
-+0.08 to +0.56).
+improved **+0.40** — bad runs end on their own. So the coaching change itself is worth
+far less than the raw bounce suggests. Measured two ways:
+
+- **Chance quality** (xG difference: the quality of chances created minus conceded, which
+  doesn't depend on whether shots happen to go in) improves **+0.32 per game** beyond
+  expectation (95% interval +0.08 to +0.56) — a clear effect.
+- **Points** improve **+0.09 per game** beyond expectation (95% interval −0.06 to +0.23).
+  That's consistent with the xG gain, which is worth about +0.18 points per game, but
+  too noisy to confirm on its own: over 8 matches, luck in finishing alone moves points
+  per game by about ±0.37.
+
+Most likely, then, a real but modest effect of roughly +0.1 to +0.2 points per game.
+"The coaching change" here means everything that changes at that moment — January
+signings or players returning from injury included — not the new coach alone.
 
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 

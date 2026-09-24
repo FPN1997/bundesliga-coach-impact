@@ -182,6 +182,18 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
                 summary.update(est.bootstrap())
                 summary["n_control_windows"] = est.n_control
             results[label][outcome] = summary
+        # Puts the two outcomes on one scale: how many points per game one
+        # unit of xG difference per game is worth over a window (fit on
+        # control windows), so the xG effect can be read in points.
+        ctrl = subset[subset["kind"] == "control"].dropna(subset=["xgd_after", "ppg_after"])
+        if len(ctrl) >= 30 and results[label]["xgd"].get("n_treated"):
+            slope = float(np.polyfit(ctrl["xgd_after"], ctrl["ppg_after"], 1)[0])
+            xgd = results[label]["xgd"]
+            results[label]["ppg_per_xgd"] = slope
+            results[label]["ppg_implied_by_xgd_effect"] = {
+                "effect": slope * xgd["effect"],
+                "ci95": [slope * x for x in xgd["effect_ci95"]],
+            }
     return results
 
 

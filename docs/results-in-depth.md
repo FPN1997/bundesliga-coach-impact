@@ -54,12 +54,26 @@ are exactly the cases the question is about, so it was replaced.
 *(controls: 1,876 mid-season windows, 921 summer-spanning)*
 
 **Reading it.** About 80% of the points "bounce" after a mid-season sacking is what
-similar teams that kept their coach did anyway. The remainder, +0.09 PPG, is positive in
-87% of the bootstrap resamples but its interval includes zero. The underlying-performance
-signal is clearer: xG difference improves 0.32 per game beyond expectation, with an
-interval that excludes zero. A reasonable reading is that new coaches do change how a
-team plays, but over 8 matches that only partly shows up in points. Summer appointments
+similar teams that kept their coach did anyway. Both rows are effects of the coaching
+change, estimated identically; they differ in what they measure:
+
+- **xG difference** (quality of chances created minus conceded) improves 0.32 per game
+  beyond expectation, with an interval that excludes zero.
+- **Points** improve 0.09 per game beyond expectation — positive in 87% of the bootstrap
+  resamples, but the interval includes zero.
+
+The two agree. Across the control windows, +1 xG difference per game goes with +0.57
+points per game over 8 matches, so the xG gain implies about +0.18 PPG (+0.05 to +0.32
+across its interval), which the points interval comfortably contains. Points are just
+much noisier: over 8 matches, finishing and goalkeeping luck move PPG by about ±0.37
+(the spread of 8-match PPG not explained by xG), and with 39 sackings that alone is
+enough to blur an effect of this size. The most likely truth is a real but modest effect
+of roughly +0.1 to +0.2 PPG — a fraction of the raw +0.50 bounce. Summer appointments
 show no clear effect on either measure.
+
+"The coaching change" means everything that changes at the same moment: a January
+signing, players returning from injury, a softer run of fixtures (opponent strength
+isn't adjusted for) — not the new coach alone.
 
 The biggest positive surprise in the data is Xabi Alonso replacing Gerardo Seoane at
 Leverkusen in October 2022: +1.38 PPG against an expected +0.62.
