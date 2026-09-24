@@ -115,9 +115,28 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.felixnitschke.bundes
 Check status: `launchctl print gui/$(id -u)/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh`.
 Uninstall: `launchctl bootout gui/$(id -u)/com.felixnitschke.bundesliga-coach-impact.weeklyrefresh`.
 
+**Publishing the results page.** After a successful refresh, `scripts/publish_site.sh`
+refreshes the odds benchmark, rebuilds the page, commits `site/` and pushes to `main`,
+which triggers the GitHub Pages deploy. Because it pushes to a public repo unattended,
+it is deliberately conservative:
+
+- it publishes only when there are new matches (no empty commits in the summer break);
+- only from `main`, and never when `origin/main` has commits that aren't in the local
+  checkout — it won't merge or rebase on its own;
+- it commits **only** `site/`; anything else in the working tree, staged or not, is left
+  as it was;
+- a failed odds download doesn't block publishing (the page keeps the previous
+  benchmark numbers), but a failed page build does.
+
+A notification says when the page was published or why it wasn't. To refresh data
+without publishing, add `PUBLISH` = `0` under an `EnvironmentVariables` dict in the plist. All of this was tested against
+a local bare repository: new data (publishes, touching only `site/`), no new data (skips),
+remote ahead (refuses), wrong branch (refuses), odds failure (still publishes).
+
 Limitations: a Mac that stays off still misses the run until it's next on; and the
-refresh updates the data and analyses, but not the trained models or the published
-page. Those are rebuilt with `bundesliga reproduce` and a push.
+weekly job doesn't retrain the models — the page's benchmark scores the saved models on
+the growing test set, and `bundesliga reproduce` retrains everything. Git pushes use the
+macOS Keychain credential, which works in launchd's minimal environment (verified).
 
 ## Tests and CI
 

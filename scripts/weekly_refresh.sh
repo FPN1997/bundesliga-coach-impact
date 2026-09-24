@@ -18,6 +18,9 @@
 #     be reachable before starting, and retries a failed attempt.
 #   - Neither failure told anyone -> a failure now raises a macOS
 #     notification, not just a line in a log file.
+#
+# After a successful refresh it also publishes the results page
+# (scripts/publish_site.sh; set PUBLISH=0 to skip).
 set -u
 
 PROJECT_DIR=${PROJECT_DIR:-"/Users/felixnitschke/Felix.com/bundesliga-coach-impact"}
@@ -31,6 +34,8 @@ MAX_ATTEMPTS=${MAX_ATTEMPTS:-3}
 RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-600}
 PROBE_URL=${PROBE_URL:-"https://understat.com"}
 NOTIFY=${NOTIFY:-1}
+PUBLISH=${PUBLISH:-1}                                   # 0 = refresh data only, don't push the page
+PUBLISH_TIMEOUT_SECONDS=${PUBLISH_TIMEOUT_SECONDS:-900}
 
 mkdir -p "$LOG_DIR"
 
@@ -81,6 +86,7 @@ run_with_timeout() {
 }
 
 STATUS=1
+PUBLISH_STATUS=
 {
     log "=== Weekly refresh started ==="
     cd "$PROJECT_DIR" && source .venv/bin/activate
@@ -101,13 +107,24 @@ STATUS=1
 
     if [ "$STATUS" -eq 0 ]; then
         log "=== Weekly refresh finished OK ==="
+        # Publish the results page (scripts/publish_site.sh: commits only
+        # site/, only when there are new matches, only from an up-to-date main).
+        if [ "$PUBLISH" = "1" ]; then
+            run_with_timeout "$PUBLISH_TIMEOUT_SECONDS" bash scripts/publish_site.sh
+            PUBLISH_STATUS=$?
+        fi
     else
         log "=== Weekly refresh FAILED (exit $STATUS) ==="
     fi
 } >> "$LOG_FILE" 2>&1
 
 if [ "$STATUS" -eq 0 ]; then
-    echo "ok $(date '+%Y-%m-%dT%H:%M:%S') $LOG_FILE" > "$STATUS_FILE"
+    echo "ok $(date '+%Y-%m-%dT%H:%M:%S') publish=${PUBLISH_STATUS:-skipped} $LOG_FILE" > "$STATUS_FILE"
+    if [ "${PUBLISH_STATUS:-0}" -ne 0 ]; then
+        notify "Bundesliga results page not published" "Data refreshed OK, publishing failed (exit $PUBLISH_STATUS). See $(basename "$LOG_FILE")"
+    elif grep -q "publish: published" "$LOG_FILE"; then
+        notify "Bundesliga results page updated" "$(grep "publish: published" "$LOG_FILE" | tail -1 | sed 's/.*publish: //')"
+    fi
 else
     echo "failed $(date '+%Y-%m-%dT%H:%M:%S') exit=$STATUS $LOG_FILE" > "$STATUS_FILE"
     notify "Bundesliga refresh failed" "Exit $STATUS after $MAX_ATTEMPTS attempts. See $(basename "$LOG_FILE")"
