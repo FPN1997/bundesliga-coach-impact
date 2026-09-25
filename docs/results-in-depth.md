@@ -398,6 +398,28 @@ Two details keep the table honest:
 - A coach who took over within the form window already *is* the change, so for that club
   the "with a new coach" range is the one that applies.
 
+**Track record.** `track_record()` rescores every past season with the model that never saw
+it (`season_out_predictions()`), then ranks all clubs on every matchday. For each mid-season
+coaching change in a completed season, it records the club's reading after its last match
+under the outgoing coach, and the reading one match earlier.
+
+- **Changes counted:** 99. Another 15 changes that ended a spell of
+  under 30 days (usually a caretaker) are kept apart, because they're easy to see coming and
+  would flatter the record.
+- **Too early to score:** 6, all before matchday 5, when the meter isn't shown yet.
+
+| | Changes in the meter's top 3 | Ranked first | By chance (top 3 of 18) |
+|---|---|---|---|
+| After the last match under the outgoing coach | 67 of 93 (72%) | 38 | 17% |
+| One match earlier | 49 of 92 (53%) | | 17% |
+
+The reading after the last match is what the club's board saw too, often hours before
+announcing the change. So the reading one match earlier is the fairer test of foresight.
+The other direction matters as much: of the 980 club-weeks in the top 3, only
+22% were followed by a change within 4 matches, against
+6.6% for all clubs. The meter finds the clubs under pressure; most of them
+still keep their coach.
+
 **Recovery anyway.** This is expected points per game over the next 8 matches if the coach
 stays. It uses the same regression on comparison windows as the coaching-change study
 (teams that kept their coach, adjusted for form, xG difference and the change in fixture

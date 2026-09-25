@@ -59,7 +59,7 @@ section > p strong { color: var(--ink); }
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 20px; margin-top: 18px;
 }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 24px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 12px; margin-top: 24px; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
 .tile .label { font-size: 14px; color: var(--ink-2); }
 @media (min-width: 760px) { .tile .label { min-height: 2.9em; } }
@@ -135,6 +135,14 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
     <div class="card">
       <div class="legend" id="meter-legend"></div>
       <div id="meter-rows"></div>
+    </div>
+    <div class="card" id="record-card">
+      <p class="chart-title">Track record: would it have seen them coming?</p>
+      <p class="chart-sub" id="record-sub"></p>
+      <div class="tiles" id="record-tiles" style="margin-top:8px"></div>
+      <h3 id="record-season-title"></h3>
+      <div id="record-table"></div>
+      <details><summary>Every season</summary><div id="record-seasons"></div></details>
     </div>
     <p class="note"><a href="sack-o-meter.png" download>Download this week's table as an image</a> (1200×675, for sharing).</p>
     <details><summary>How the sack-o-meter works, and how good it is</summary><div class="card" id="meter-method"></div></details>
@@ -443,6 +451,31 @@ for (const [label, value, sub, emph] of tiles) {
       row.appendChild(html("div", `Changed coach within the last ${c.form_matches} matches: the blue range already applies.`, "meter-note"));
     }
     rows.appendChild(row);
+  }
+
+  // ---- track record: every past change, scored by a model that never saw its season
+  const T = S.track_record;
+  if (!T || !T.n_scored) { $("record-card").hidden = true; }
+  else {
+    const seasonLabel = (code) => `20${code.slice(0, 2)}\u2013${code.slice(2)}`;
+    $("record-sub").textContent = `Every mid-season coaching change since 2014, and what the meter said at the time, from a model that never saw that season. ${T.n_too_early} changes before matchday 5 can't be scored; ${T.n_short_spells} caretaker spells ending are left out, since they're easy to see coming.`;
+    const chance = T.top / 18;
+    for (const [label, value, sub] of [
+      [`In the top ${T.top} after the last match`, `${T.in_top} of ${T.n_scored}`, `${pct(T.in_top / T.n_scored)} of changes; ${T.ranked_first} ranked first (by chance: ${pct(chance)})`],
+      [`In the top ${T.top} one match earlier`, `${T.in_top_match_before} of ${T.n_scored_match_before}`, `${pct(T.in_top_match_before / T.n_scored_match_before)}, before the last straw (by chance: ${pct(chance)})`],
+      [`Top-${T.top} clubs that did change`, pct(T.top_weeks_followed_by_change), `within ${S.risk_horizon} matches, vs. ${pct(T.base_rate)} for all clubs: most clubs near the top keep their coach`],
+    ]) {
+      const t = html("div", null, "tile");
+      t.append(html("div", label, "label"), html("div", value, "value"), html("div", sub, "sub"));
+      $("record-tiles").appendChild(t);
+    }
+    $("record-season-title").textContent = `Last completed season, ${seasonLabel(T.last_season)}`;
+    const shortDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    table($("record-table"), ["Club", "Change", "After matchday", "Meter reading", "Rank"],
+      T.last_season_changes.map(e => [e.team, `${e.coach_out} \u2192 ${e.coach_in}${e.short_spell ? " (caretaker spell)" : ""}`,
+        `${e.matchday} (${shortDate(e.last_match)})`, e.risk != null ? pct(e.risk) : "too early", e.rank != null ? `${e.rank} of ${e.n_clubs}` : "\u2014"]), [2, 3, 4]);
+    table($("record-seasons"), ["Season", "Changes", "Scored", `In the top ${T.top}`],
+      T.by_season.map(b => [seasonLabel(b.season), String(b.changes), String(b.scored), b.scored ? `${b.in_top} (${pct(b.in_top / b.scored)})` : "\u2014"]), [1, 2, 3]);
   }
 
   const band = R.calibration.filter(b => b.lo >= 0.2).at(-1);

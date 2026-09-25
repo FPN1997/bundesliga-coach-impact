@@ -109,6 +109,13 @@ percentages hold up: clubs given 20%–35% had a change
 27% of the time. It predicts what clubs *do*, not what they should do
 ([details](docs/results-in-depth.md#sack-o-meter)).
 
+**Track record, 2014–2026:** scored by a model that never saw that season, 49 of the
+92 mid-season changes were already in the meter's top 3 one match before the club's last
+match under the outgoing coach (53%; by chance, 17%). After
+that last match, 67 of 93 were (72%). The other way round, most
+clubs near the top keep their coach: only 22% of top-3 readings were followed
+by a change within 4 matches.
+
 ### Formation matchups
 
 ![Points per game by formation matchup](docs/formation_matchup_heatmap.png)

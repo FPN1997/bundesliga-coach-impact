@@ -163,6 +163,86 @@ def evaluate_risk_model(states: pd.DataFrame) -> dict:
             "validation": "leave-one-season-out"}
 
 
+SHORT_SPELL_DAYS = 30  # a coach replaced within a month was usually a caretaker
+
+
+def season_out_predictions(states: pd.DataFrame) -> pd.Series:
+    """Sack risk for every scoreable club-week, each season predicted by a
+    model fit on the other seasons' labelled weeks -- including weeks whose
+    own outcome can't be labelled (the last few of a season), so every club
+    can be ranked on every matchday."""
+    rows = _training_rows(states)
+    scoreable = states[(states["season_matches"] >= MIN_SEASON_MATCHES) & states["coach"].notna()
+                       ].dropna(subset=RISK_FEATURES)
+    pred = pd.Series(np.nan, index=states.index, name="sack_risk")
+    for season in scoreable["season"].unique():
+        train = rows[rows["season"] != season]
+        if train["sacked_soon"].sum() == 0:
+            continue
+        test = scoreable[scoreable["season"] == season]
+        fit = _risk_model().fit(train[RISK_FEATURES], train["sacked_soon"].astype(int))
+        pred[test.index] = fit.predict_proba(test[RISK_FEATURES])[:, 1]
+    return pred
+
+
+def track_record(states: pd.DataFrame, pred: pd.Series, top: int = 3) -> dict:
+    """How the meter would have done: for every mid-season coaching change in
+    a completed season, its reading after the club's last match under the
+    outgoing coach, and where that ranked among all clubs that matchday.
+    Changes before matchday MIN_SEASON_MATCHES can't be scored (the meter
+    isn't shown yet); short spells ending (a caretaker replaced) are kept
+    apart, since they're easy to see coming and would flatter the record."""
+    st = states.assign(sack_risk=pred)
+    st["rank"] = st.groupby(["season", "season_matches"])["sack_risk"].rank(ascending=False, method="min")
+    st["n_ranked"] = st.groupby(["season", "season_matches"])["sack_risk"].transform("count")
+    by_season = st.groupby(["team", "season"], sort=False)
+    nxt = by_season["coach"].shift(-1)
+    # the stricter test: the reading one match earlier, before the last straw
+    st["rank_match_before"] = by_season["rank"].shift(1).where(by_season["coach"].shift(1) == st["coach"])
+    events = st[nxt.notna() & st["coach"].notna() & nxt.ne(st["coach"])].assign(coach_in=nxt)
+    current = st.loc[st["date"].idxmax(), "season"]
+    events = events[events["season"] != current]
+
+    def one(r) -> dict:
+        out = {"team": r.team, "season": r.season, "last_match": r.date.strftime("%Y-%m-%d"),
+               "matchday": int(r.season_matches), "coach_out": r.coach, "coach_in": r.coach_in,
+               "short_spell": bool(r.tenure_days < SHORT_SPELL_DAYS)}
+        if not np.isnan(r.sack_risk):
+            out.update({"risk": float(r.sack_risk), "rank": int(r.rank), "n_clubs": int(r.n_ranked)})
+        if not np.isnan(r.rank_match_before):
+            out["rank_match_before"] = int(r.rank_match_before)
+        return out
+
+    all_events = [one(r) for r in events.itertuples()]
+    main = [e for e in all_events if not e["short_spell"]]
+    scored = [e for e in main if "risk" in e]
+    # the other direction: how often a top-ranked club did change within the horizon
+    labelled = st.dropna(subset=["sack_risk", "sacked_soon"])
+    top_weeks = labelled[labelled["rank"] <= top]
+    seasons = sorted({e["season"] for e in all_events})
+    return {
+        "top": top,
+        "n_changes": len(main), "n_scored": len(scored),
+        "n_too_early": len(main) - len(scored),
+        "n_short_spells": len(all_events) - len(main),
+        "in_top": sum(e["rank"] <= top for e in scored),
+        "ranked_first": sum(e["rank"] == 1 for e in scored),
+        "n_scored_match_before": sum("rank_match_before" in e for e in scored),
+        "in_top_match_before": sum(e.get("rank_match_before", 99) <= top for e in scored),
+        "median_rank": float(np.median([e["rank"] for e in scored])) if scored else None,
+        "median_risk": float(np.median([e["risk"] for e in scored])) if scored else None,
+        "top_weeks": len(top_weeks),
+        "top_weeks_followed_by_change": float(top_weeks["sacked_soon"].mean()) if len(top_weeks) else None,
+        "base_rate": float(labelled["sacked_soon"].mean()) if len(labelled) else None,
+        "last_season": seasons[-1] if seasons else None,
+        "last_season_changes": [e for e in all_events if seasons and e["season"] == seasons[-1]],
+        "by_season": [{"season": se, "changes": sum(e["season"] == se for e in main),
+                       "scored": sum(e["season"] == se for e in scored),
+                       "in_top": sum(e["season"] == se and e["rank"] <= top for e in scored)}
+                      for se in seasons],
+    }
+
+
 def recovery_fit(matches: pd.DataFrame, before: int) -> dict:
     """Control-window regression (as in coach_change_effect.py) of PPG over
     the next RECOVERY_HORIZON matches on form over the last `before`: what a
@@ -254,6 +334,7 @@ def run() -> dict:
     spells = coach_spells(pd.read_csv(config.COACH_HISTORY_RESOLVED_CSV))
     states = team_match_states(matches, odds, spells)
     evaluation = evaluate_risk_model(states)
+    record = track_record(states, season_out_predictions(states))
     rows = _training_rows(states)
     model = _risk_model().fit(rows[RISK_FEATURES], rows["sacked_soon"].astype(int))
 
@@ -274,6 +355,7 @@ def run() -> dict:
         "sacked_form_max": sacked_form_max,
         "effect": {k: effect[k] for k in ("effect", "effect_ci95", "n_treated")},
         "risk_model": evaluation,
+        "track_record": record,
         "clubs": clubs,
     }
     out = Path(config.OUTPUT_DIR) / "sack_o_meter.json"
@@ -285,5 +367,9 @@ def run() -> dict:
         log.info("  %-16s %-22s %s", c["team"], c["coach"],
                  "changed since the last match" if c.get("changed_since_last_match")
                  else f"risk {c['sack_risk']:.1%}" if "sack_risk" in c else "-")
+    log.info("Track record: %d of %d scoreable changes were in the top %d the week of (%d too early to "
+             "score, %d short spells kept apart); top-%d weeks followed by a change: %.0f%%",
+             record["in_top"], record["n_scored"], record["top"], record["n_too_early"],
+             record["n_short_spells"], record["top"], 100 * (record["top_weeks_followed_by_change"] or 0))
     log.info("Saved -> %s", out)
     return result

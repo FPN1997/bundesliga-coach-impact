@@ -82,3 +82,49 @@ def test_form_is_this_seasons_last_8_matches_or_all_of_them_if_fewer():
     assert st["ppg_form"].iloc[2] == pytest.approx(m["points"].iloc[:3].mean())
     assert st["ppg_form"].iloc[11] == pytest.approx(m["points"].iloc[4:12].mean())
     assert st["ppg_last2"].iloc[11] == pytest.approx(m["points"].iloc[10:12].mean())
+
+
+def _states_for_record() -> pd.DataFrame:
+    """Two completed seasons plus a current one, three clubs, 6 matchdays each.
+    Readings exist from matchday 4, with Alpha always highest and Gamma lowest.
+    - 2022-23: Alpha changes coach after matchday 5 (ranked 1st that week).
+    - 2023-24: Beta changes after matchday 4 (ranked 2nd); its caretaker is
+      replaced after matchday 5 -- a short spell, kept apart.
+    - 2024-25 is the current season: Gamma's change there must not count."""
+    plan = {("2223", "Alpha"): ["A"] * 5 + ["A2"], ("2223", "Beta"): ["B"] * 6,
+            ("2223", "Gamma"): ["G"] * 6, ("2324", "Alpha"): ["A2"] * 6,
+            ("2324", "Beta"): ["B"] * 4 + ["Bc", "B2"], ("2324", "Gamma"): ["G"] * 6,
+            ("2425", "Alpha"): ["A2"] * 6, ("2425", "Beta"): ["B2"] * 6,
+            ("2425", "Gamma"): ["G"] * 5 + ["G2"]}
+    risk = {"Alpha": 0.30, "Beta": 0.20, "Gamma": 0.05}
+    rows = []
+    for (season, team), coaches in plan.items():
+        start = pd.Timestamp(f"20{season[:2]}-08-01")
+        for md, coach in enumerate(coaches, start=1):
+            rows.append({"team": team, "season": season, "date": start + pd.Timedelta(days=7 * md),
+                         "coach": coach, "season_matches": md,
+                         "tenure_days": 7 if coach == "Bc" else 400, "sacked_soon": np.nan,
+                         "risk": risk[team] if md >= 4 else np.nan})
+    return pd.DataFrame(rows)
+
+
+def test_track_record_scores_changes_against_every_club_that_matchday():
+    st = _states_for_record()
+    rec = som.track_record(st, st["risk"], top=1)
+    assert rec["n_changes"] == 2 and rec["n_scored"] == 2
+    assert rec["in_top"] == 1 and rec["ranked_first"] == 1  # Alpha 1st, Beta 2nd of 3
+    assert rec["n_short_spells"] == 1                        # the caretaker, kept apart
+    assert [b["season"] for b in rec["by_season"]] == ["2223", "2324"]  # current season excluded
+    beta = [e for e in rec["last_season_changes"] if not e["short_spell"]]
+    assert [(e["team"], e["coach_out"], e["coach_in"], e["rank"], e["n_clubs"]) for e in beta] == [
+        ("Beta", "B", "Bc", 2, 3)]
+    # the stricter reading one match earlier exists for Alpha (matchday 4) but not for Beta
+    # (matchday 3 had no reading yet)
+    assert rec["n_scored_match_before"] == 1
+
+
+def test_track_record_marks_changes_too_early_to_score():
+    st = _states_for_record()
+    st.loc[(st["team"] == "Alpha") & (st["season"] == "2223"), "risk"] = np.nan  # no reading yet
+    rec = som.track_record(st, st["risk"])
+    assert rec["n_scored"] == 1 and rec["n_too_early"] == 1
