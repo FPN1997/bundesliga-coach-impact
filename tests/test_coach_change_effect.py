@@ -122,3 +122,46 @@ def test_windows_record_whether_a_transfer_window_follows_the_change():
     df = _team(["A"] * 8 + ["B"] * 8)
     w = cce.build_windows(df, window=W)
     assert not w.loc[w["kind"] == "treated", "window_after"].iloc[0]
+
+
+def test_windows_record_each_matchs_points_around_the_change():
+    df = _team(["A"] * 8 + ["B"] * 8)
+    df["points"] = [float(i % 4) for i in range(16)]
+    w = cce.build_windows(df, window=W)
+    t = w[w["kind"] == "treated"].iloc[0]
+    # pts_-3 .. pts_-1 are the last W matches before the change (index 5..7),
+    # pts_+0 .. pts_+2 the first W after it (index 8..10)
+    assert [t[f"pts_{k:+d}"] for k in range(-W, W)] == list(df["points"].iloc[5:11])
+    assert t["ppg_last2"] == pytest.approx(df["points"].iloc[6:8].mean())
+
+
+def _event_windows(effect: float, seed: int = 0) -> pd.DataFrame:
+    """Per-match points for `_synthetic_windows`-style data: controls regress
+    to the mean, treated windows get `effect` on top after the change."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for t in range(12):
+        for kind, n, top in (("control", 40, 3.0), ("treated", 3, 0.8)):
+            for _ in range(n):
+                before = rng.integers(0, 4, W).astype(float) * top / 3
+                after = rng.normal(1.3, 0.3, W) + (effect if kind == "treated" else 0.0)
+                rows.append({"team": f"T{t}", "kind": kind, "in_season": True,
+                             "ppg_before": before.mean(), "ppg_after": after.mean(),
+                             "xgd_before": rng.normal(0, 0.5), "xgd_after": 0.0,
+                             **{f"pts_{k:+d}": v
+                                for k, v in zip(range(-W, W), [*before, *after], strict=True)}})
+    return pd.DataFrame(rows)
+
+
+def test_event_study_after_gap_is_the_headline_effect_and_before_gap_is_zero():
+    w = _event_windows(effect=0.4)
+    cov = ("ppg_before", "xgd_before")
+    es = cce.event_study(w, cov, window=W)
+    gap = {k: r["actual"] - r["expected"] for k, r in ((r["match"], r) for r in es["matches"])}
+    headline = cce._AdjustedEstimator(w, "ppg", cov).estimate()["effect"]
+
+    assert [r["match"] for r in es["matches"]] == list(range(-W, W))
+    assert np.mean([gap[k] for k in range(0, W)]) == pytest.approx(headline, abs=1e-9)
+    assert headline == pytest.approx(0.4, abs=0.15)
+    # mechanical, not evidence of a good comparison: ppg_before is a covariate
+    assert np.mean([gap[k] for k in range(-W, 0)]) == pytest.approx(0.0, abs=1e-9)

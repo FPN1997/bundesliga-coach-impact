@@ -10,10 +10,15 @@ as `bundesliga predict` (predict.current_team_state + predict.forecast).
 
 Rebuild with `bundesliga site` after `bundesliga pipeline` /
 `bundesliga benchmark`, then commit site/ to publish.
+
+It also draws og.png, the preview card that link previews (chat apps,
+LinkedIn, X, Reddit) show for the page -- redrawn each build, so a shared
+link always shows the current numbers.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 from datetime import datetime, timezone
@@ -33,6 +38,7 @@ log = logging.getLogger(__name__)
 SITE_DIR = Path("site")
 TEMPLATE = Path(__file__).with_name("site_template.html")
 REPO_URL = "https://github.com/FPN1997/bundesliga-coach-impact"
+SITE_URL = "https://fpn1997.github.io/bundesliga-coach-impact/"  # link previews need absolute URLs
 
 
 def _out(name: str) -> Path:
@@ -153,14 +159,80 @@ def collect() -> dict:
     }
 
 
+def _sign(v: float) -> str:
+    return ("+" if v >= 0 else "\u2212") + f"{abs(v):.2f}"  # true minus sign, as on the page
+
+
+def preview_text(data: dict) -> str:
+    """The one-sentence summary link previews show, from the current numbers."""
+    ppg = data["coach_effect"]["results"]["mid_season"]["ppg"]
+    raw, anyway, effect = (_sign(ppg[k]) for k in ("raw_change", "counterfactual_change", "effect"))
+    return (f"Bundesliga teams that sack their coach mid-season improve by {raw} points per game, "
+            f"but similar teams that kept theirs improve {anyway} anyway. "
+            f"What's left for the change itself: {effect}.")
+
+
+def draw_preview_image(data: dict, out_path: Path) -> None:
+    """1200x630 share card: the three headline numbers and the event study."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from src import viz_style as vs
+
+    ce = data["coach_effect"]
+    ppg, es = ce["results"]["mid_season"]["ppg"], ce["results"]["event_study"]
+    fig = plt.figure(figsize=(12, 6.3), dpi=100, facecolor=vs.SURFACE)
+    first = data["meta"]["seasons"][0]  # "2014-2015" -> "2014/15"
+    fig.text(0.05, 0.87, f"BUNDESLIGA SINCE {first[:4]}/{first[-2:]}  \u00b7  {ppg['n_treated']} MID-SEASON "
+             "SACKINGS", fontsize=14, color=vs.INK_2, fontweight="bold")
+    fig.text(0.05, 0.75, "Does sacking the coach work?", fontsize=40, color=vs.INK, fontweight="bold")
+    stats = [(_sign(ppg["raw_change"]), "more points per game after a sacking", vs.INK),
+             (_sign(ppg["counterfactual_change"]), "expected anyway (teams that kept their coach)",
+              vs.SERIES[1]),
+             (_sign(ppg["effect"]), "left for the change itself", vs.SERIES[0])]
+    for i, (value, label, color) in enumerate(stats):
+        y = 0.56 - i * 0.155
+        fig.text(0.05, y, value, fontsize=34, color=color, fontweight="bold", va="center")
+        fig.text(0.05, y - 0.065, label, fontsize=13.5, color=vs.INK_2, va="center")
+    fig.text(0.05, 0.05, SITE_URL.removeprefix("https://").rstrip("/"), fontsize=13, color=vs.MUTED)
+
+    ax = fig.add_axes((0.53, 0.12, 0.44, 0.47))
+    vs.style_axes(ax)
+    rows = es["matches"]
+    k = np.arange(len(rows))
+    half = len(rows) / 2 - 0.5
+    ax.axvspan(half, len(rows) - 0.5, color=vs.GRID, alpha=0.45, linewidth=0)
+    ax.axvline(half, color=vs.INK_2, linewidth=1)
+    ax.plot(k, [r["expected"] for r in rows], color=vs.SERIES[1], linewidth=3)
+    ax.plot(k, [r["actual"] for r in rows], color=vs.SERIES[0], linewidth=3.5, marker="o", markersize=7,
+            markeredgecolor=vs.SURFACE, markeredgewidth=1.5)
+    ax.set_xlim(-0.5, len(rows) - 0.5)
+    ax.set_ylim(0, 1.8)
+    ax.set_xticks([0, half - 0.5, half + 0.5, len(rows) - 1],
+                  [str(rows[0]["match"]), "-1", "+1", f"+{rows[-1]['match'] + 1}"])
+    ax.tick_params(labelsize=12)
+    ax.set_yticks([0, 0.5, 1.0, 1.5])
+    ax.set_title("Points per game, match by match", loc="left", fontsize=15, color=vs.INK,
+                 fontweight="bold", pad=10)
+    ax.text(half + 0.3, 1.72, "new coach", fontsize=12, color=vs.INK_2, va="top")
+    ax.text(0, 1.72, "sacked teams", fontsize=12, color=vs.SERIES[0], fontweight="semibold", va="top")
+    ax.text(0, 1.54, "expected anyway", fontsize=12, color=vs.SERIES[1], fontweight="semibold", va="top")
+    fig.savefig(out_path, dpi=100, facecolor=vs.SURFACE)
+    plt.close(fig)
+
+
 def build_site() -> Path:
     data = collect()
-    html = TEMPLATE.read_text().replace(
-        "/*__DATA__*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
+    page = (TEMPLATE.read_text()
+            .replace("__OG_DESCRIPTION__", html.escape(preview_text(data)))
+            .replace("__SITE_URL__", SITE_URL)
+            .replace("/*__DATA__*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/")))
     SITE_DIR.mkdir(exist_ok=True)
     out = SITE_DIR / "index.html"
-    out.write_text(html)
+    out.write_text(page)
     (SITE_DIR / ".nojekyll").write_text("")
+    draw_preview_image(data, SITE_DIR / "og.png")
     log.info("Built %s (%.0f KB; data through %s, next matchday: %d fixtures)", out,
              out.stat().st_size / 1024, data["meta"]["data_through"],
              len(data["next_matchday"]["fixtures"]))

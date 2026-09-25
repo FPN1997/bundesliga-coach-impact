@@ -4,7 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Does Sacking the Coach Work?</title>
-<meta name="description" content="Bundesliga coaching changes measured against regression to the mean, and match forecasts benchmarked against the betting market.">
+<meta name="description" content="__OG_DESCRIPTION__">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Bundesliga Coach Impact">
+<meta property="og:title" content="Does sacking the coach work? Bundesliga, 2014 to today">
+<meta property="og:description" content="__OG_DESCRIPTION__">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:image" content="__SITE_URL__og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Points per game match by match around a Bundesliga sacking: a collapse right before, a jump after, compared with teams that kept their coach.">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 <style>
 :root {
@@ -108,6 +118,17 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
   <section id="effect">
     <h2>Most of the "new coach bounce" happens anyway</h2>
     <p id="effect-text"></p>
+    <div class="card">
+      <p class="chart-title">Match by match: points before and after a mid-season sacking</p>
+      <p class="chart-sub" id="es-sub"></p>
+      <div class="legend">
+        <span><i class="key-dot" style="background:var(--s1)"></i>Teams that sacked their coach (band: 95% interval)</span>
+        <span><i class="key-line" style="background:var(--s2)"></i>Expected anyway, from similar teams that kept theirs</span>
+      </div>
+      <div id="event"></div>
+      <p class="note" id="es-note"></p>
+      <details><summary>Show as table</summary><div id="es-table"></div></details>
+    </div>
     <div class="card">
       <p class="chart-title">Every mid-season sacking vs. teams in the same spot that kept their coach</p>
       <p class="chart-sub" id="effect-sub"></p>
@@ -312,6 +333,63 @@ para($("effect-text"), [
     : []),
 ]);
 $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.ppg.n_control_windows.toLocaleString("en")} comparison windows. Hover a dot for the details.`;
+// ---------- event study: match by match around the change -------------------
+(function eventStudy() {
+  const ES = CE.results.event_study;
+  if (!ES) { $("event").closest(".card").hidden = true; return; }
+  const rows = ES.matches, n = rows.length, half = n / 2;
+  const label = (k) => k < 0 ? String(k) : "+" + (k + 1);
+  const W = 900, H = 340, m = { l: 48, r: 16, t: 16, b: 52 };
+  const step = (W - m.l - m.r) / n, x = (i) => m.l + (i + 0.5) * step;
+  const top = Math.max(2, ...rows.map(r => r.actual_ci95[1]));
+  const y = scale(0, top, H - m.b, m.t);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Points per game in each of the matches before and after a mid-season coaching change, against the expected level" }, $("event"));
+  el("rect", { x: m.l + half * step, y: m.t, width: half * step, height: H - m.b - m.t, fill: "var(--mid)", opacity: 0.6 }, svg);
+  for (const v of ticks(0, top, 0.5)) {
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? "var(--baseline)" : "var(--grid)", "stroke-width": 1 }, svg);
+    txt("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end", style: "fill:var(--muted);font-size:12px" }, v.toFixed(1), svg);
+  }
+  const ax = el("g", { class: "axis" }, svg);
+  rows.forEach((r, i) => txt("text", { x: x(i), y: H - m.b + 18, "text-anchor": "middle" }, label(r.match), ax));
+  txt("text", { x: (m.l + W - m.r) / 2, y: H - m.b + 40, "text-anchor": "middle", class: "axis-title" }, "Matches before and after the coaching change", svg);
+  el("line", { x1: m.l + half * step, x2: m.l + half * step, y1: m.t, y2: H - m.b, stroke: "var(--ink-2)", "stroke-width": 1 }, svg);
+  txt("text", { x: m.l + half * step + 8, y: m.t + 14, style: "fill:var(--ink-2);font-size:12px" }, "new coach", svg);
+  txt("text", { x: 14, y: (m.t + H - m.b) / 2, "text-anchor": "middle", class: "axis-title", transform: `rotate(-90 14 ${(m.t + H - m.b) / 2})` }, "Points per game", svg);
+  const band = rows.map((r, i) => `${i ? "L" : "M"}${x(i)},${y(Math.min(top, r.actual_ci95[1]))}`).join("")
+    + [...rows].reverse().map((r, j) => `L${x(n - 1 - j)},${y(Math.max(0, r.actual_ci95[0]))}`).join("") + "Z";
+  el("path", { d: band, fill: "var(--s1)", opacity: 0.14 }, svg);
+  const line = (key, color, w) => el("path", { d: rows.map((r, i) => `${i ? "L" : "M"}${x(i)},${y(r[key])}`).join(""), fill: "none", stroke: color, "stroke-width": w, "stroke-linejoin": "round" }, svg);
+  line("expected", "var(--s2)", 2); line("actual", "var(--s1)", 2.5);
+  rows.forEach((r, i) => {
+    el("circle", { cx: x(i), cy: y(r.expected), r: 3.5, fill: "var(--s2)", stroke: "var(--surface)", "stroke-width": 1.5 }, svg);
+    el("circle", { cx: x(i), cy: y(r.actual), r: 5, fill: "var(--s1)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+  });
+  // one hover target per match column, covering both lines
+  rows.forEach((r, i) => {
+    const g = el("g", {}, svg);
+    el("rect", { x: x(i) - step / 2, y: m.t, width: step, height: H - m.b - m.t, fill: "transparent" }, g);
+    const when = r.match < 0 ? `${-r.match} match${r.match === -1 ? "" : "es"} before the change` : `${label(r.match).slice(1)}${["st", "nd", "rd"][r.match] || "th"} match under the new coach`;
+    hover(g, when, [[r.actual.toFixed(2), `PPG, sacked teams (95%: ${r.actual_ci95[0].toFixed(2)} to ${r.actual_ci95[1].toFixed(2)})`],
+      [r.expected.toFixed(2), "PPG expected anyway"], [fmt(r.actual - r.expected), "difference"]]);
+  });
+  const gap = (sel) => { const s = rows.filter(sel); return s.reduce((a, r) => a + r.actual - r.expected, 0) / s.length; };
+  $("es-sub").textContent = `Average over ${ES.n_changes} mid-season sackings. Hover a match for the numbers.`;
+  const last2 = rows.filter(r => r.match >= -2 && r.match < 0), spec = CE.results.mid_season_specifications || {};
+  const robust = spec.plus_last_2_matches;
+  const after = rows.filter(r => r.match >= 0), above = after.filter(r => r.actual > r.expected).length;
+  para($("es-note"), [
+    "Clubs pull the trigger right after a collapse: ",
+    { b: `${(last2.reduce((a, r) => a + r.actual, 0) / last2.length).toFixed(2)} points per game over the last two matches` },
+    `, against about ${last2[0].expected.toFixed(2)} expected. (Across all ${after.length} matches before, the two lines average the same by construction: `,
+    "the comparison is matched on that run-up.) After the change, the sacked teams sit above the expected line in ",
+    `${above} of ${after.length} matches, by ${fmt(gap(r => r.match >= 0))} per game on average \u2014 the headline effect. `,
+    ...(robust ? ["A collapse that late could itself predict a bigger rebound, so the estimate was re-run adjusting for the last two results too: ",
+                  { b: `${fmt(robust.ppg.effect)} per game` }, ", barely changed."] : []),
+  ]);
+  table($("es-table"), ["Match", "Sacked teams", "95% interval", "Expected anyway", "Difference"],
+    rows.map(r => [label(r.match), r.actual.toFixed(2), `${r.actual_ci95[0].toFixed(2)} to ${r.actual_ci95[1].toFixed(2)}`, r.expected.toFixed(2), fmt(r.actual - r.expected)]), [1, 2, 3, 4]);
+})();
+
 (function scatter() {
   const W = 900, H = 400, m = { l: 56, r: 16, t: 12, b: 52 };
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Scatter of coaching changes against the no-change baseline" }, $("scatter"));

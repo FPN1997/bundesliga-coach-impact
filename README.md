@@ -34,6 +34,14 @@ show no clear effect (+0.05, −0.07 to +0.15). "The change" still means everyth
 changes at that moment, not the new coach alone
 ([details](docs/results-in-depth.md#the-effect-of-a-coaching-change)).
 
+Match by match, clubs pull the trigger right after a collapse — 0.25 points per game over
+the last two matches, against about 0.74 expected — and after the change the sacked teams
+sit above the expected line in six of the next eight matches. A collapse that late could
+itself predict a bigger rebound, so the estimate was re-run adjusting for the last two
+results as well: +0.18 per game, barely changed.
+
+![Points per game match by match around a mid-season sacking](docs/coach_change_event_study.png)
+
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 
 *Each blue dot is a mid-season sacking; the orange line is what teams in the same

@@ -75,6 +75,33 @@ a relegated Hamburg in 2018.
 The single biggest positive surprise in the data is Tayfun Korkut replacing Hannes Wolf
 at Stuttgart in February 2018: 0.50 → 2.25 PPG, against an expected +0.59.
 
+**Match by match.** The same regression, fit on each single match's points instead of
+the 8-match average, gives the expected points at every position from 8 matches before
+the change to 8 after (`event_study()`; `outputs/coach_change_event_study.png`):
+
+![Points per game match by match around a mid-season sacking](coach_change_event_study.png)
+
+Two things show up that the 8-match averages hide. Sacked teams were doing slightly
+*better* than expected until three matches before the change, then collapsed: 0.35 and
+0.15 points per game in the last two matches, against about 0.74 expected. (Across all 8
+matches before, the lines average the same by construction — PPG before is a covariate —
+so only the shape there is informative, not the level.) After the change they sit above
+the expected line in six of eight matches; the gap averages exactly the headline +0.19,
+since least squares is linear in the outcome.
+
+That late collapse raises a fair objection: a team sacked after two heavy defeats might
+rebound more than its 8-match form suggests, whoever the coach. So the estimate was re-run
+with PPG over the last two matches as a fourth covariate (reported in every run as
+`mid_season_specifications.plus_last_2_matches`):
+
+| Mid-season, adjusted for | Points effect | xG difference effect |
+|---|---|---|
+| PPG and xG before, fixtures (headline) | +0.19 (+0.04 to +0.30) | +0.31 |
+| … plus PPG in the last 2 matches | +0.18 (+0.03 to +0.29) | +0.29 |
+
+Among control windows, the last two results add almost nothing once the 8-match form is
+known (coefficient −0.02), so the effect is not an artefact of when clubs pull the trigger.
+
 **Fixture difficulty.** Every match is rated by the points an *average* team would expect
 from it — the opponent's season-average rating in the betting market, plus home or away
 (`src/fixture_difficulty.py`) — and the change in that rating between the 8 matches

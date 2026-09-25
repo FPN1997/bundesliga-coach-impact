@@ -22,6 +22,8 @@ def test_embedded_data_cannot_close_the_script_tag(monkeypatch, tmp_path):
                "coach_effect": {"sackings": [{"coach_in": hostile}]}}
     monkeypatch.setattr(site, "collect", lambda: payload)
     monkeypatch.setattr(site, "SITE_DIR", tmp_path)
+    monkeypatch.setattr(site, "preview_text", lambda data: "")
+    monkeypatch.setattr(site, "draw_preview_image", lambda data, path: None)
 
     html = site.build_site().read_text()
 
@@ -32,3 +34,39 @@ def test_embedded_data_cannot_close_the_script_tag(monkeypatch, tmp_path):
     embedded = html.split("const DATA = ", 1)[1].split(";\nconst NS", 1)[0]
     assert json.loads(embedded)["coach_effect"]["sackings"][0]["coach_in"] == hostile
     assert (tmp_path / ".nojekyll").exists()
+
+
+def _preview_data():
+    matches = [{"match": k, "actual": 1.0 + 0.1 * (k >= 0), "expected": 1.0,
+                "actual_ci95": [0.8, 1.3]} for k in range(-8, 8)]
+    return {"meta": {"seasons": ["2014-2015", "2026-2027"]},
+            "coach_effect": {"results": {
+                "mid_season": {"ppg": {"raw_change": 0.54, "counterfactual_change": 0.35,
+                                       "effect": 0.19, "n_treated": 65}},
+                "event_study": {"n_changes": 65, "matches": matches}}}}
+
+
+def test_preview_text_uses_the_current_numbers_with_real_minus_signs():
+    data = _preview_data()
+    data["coach_effect"]["results"]["mid_season"]["ppg"]["effect"] = -0.05
+    text = site.preview_text(data)
+    assert "+0.54" in text and "+0.35" in text and "−0.05" in text
+
+
+def test_share_card_is_the_size_link_previews_expect(tmp_path):
+    from PIL import Image
+    site.draw_preview_image(_preview_data(), tmp_path / "og.png")
+    assert Image.open(tmp_path / "og.png").size == (1200, 630)
+
+
+def test_page_has_absolute_preview_urls_and_escaped_description(monkeypatch, tmp_path):
+    data = {**_preview_data(), "next_matchday": {"fixtures": []}}
+    data["meta"]["data_through"] = "2026-09-20"
+    monkeypatch.setattr(site, "collect", lambda: data)
+    monkeypatch.setattr(site, "SITE_DIR", tmp_path)
+    monkeypatch.setattr(site, "preview_text", lambda d: 'a "quoted" <b>')
+    page = site.build_site().read_text()
+    assert f'content="{site.SITE_URL}og.png"' in page
+    assert 'content="a &quot;quoted&quot; &lt;b&gt;"' in page
+    assert "__OG_DESCRIPTION__" not in page and "__SITE_URL__" not in page
+    assert (tmp_path / "og.png").exists()

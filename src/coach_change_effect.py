@@ -143,6 +143,11 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                                                      pd.Timestamp(dates[i + window - 1])),
                 "ppg_before": points[i - window:i].mean(),
                 "ppg_after": points[i:i + window].mean(),
+                # sackings usually follow a collapse in the last couple of results;
+                # a robustness check adjusts for that too (see estimate_effects)
+                "ppg_last2": points[i - 2:i].mean(),
+                # every match's points, for the match-by-match event study
+                **{f"pts_{k:+d}": points[i + k] for k in range(-window, window)},
                 "xgd_before": np.nanmean(xgd[i - window:i]),
                 "xgd_after": np.nanmean(xgd[i:i + window]),
             })
@@ -276,6 +281,10 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
             specs["fixtures"] = (*base, "fixture_change")
         if any(c in extra for c in SQUAD_COVARIATES):
             specs["fixtures_and_squad"] = covariates
+        # Robustness: clubs sack right after a couple of bad results (see the
+        # event study). Does that late collapse predict an extra bounce beyond
+        # the 8-match form? Checked, not assumed: add the last 2 matches' PPG.
+        specs["plus_last_2_matches"] = (*covariates, "ppg_last2")
         results["mid_season_specifications"] = {}
         for name, covs in specs.items():
             results["mid_season_specifications"][name] = {"covariates": list(covs)}
@@ -287,6 +296,68 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
     return results
 
 
+
+
+def event_study(windows: pd.DataFrame, covariates: tuple[str, ...], window: int = WINDOW) -> dict:
+    """Points per game at each match from `window` before to `window` after a
+    mid-season change: what sacked teams actually took, and what similar
+    teams that kept their coach took at the same position -- the same
+    control regression as the headline estimate, fit on each match's points
+    instead of the 8-match average. Across the matches before the change the
+    two lines average the same by construction (the before-form is a
+    covariate, so that's no test of the comparison) -- only their shape
+    there is informative. After the change the gap averages to exactly the
+    headline effect, since least squares is linear in the outcome."""
+    mid = windows[windows["in_season"]].dropna(subset=list(covariates))
+    ctrl, tr = mid[mid["kind"] == "control"], mid[mid["kind"] == "treated"]
+    X_ctrl = np.column_stack([np.ones(len(ctrl)), ctrl[list(covariates)].to_numpy()])
+    X_tr = np.column_stack([np.ones(len(tr)), tr[list(covariates)].to_numpy()])
+    rows = []
+    for k in range(-window, window):
+        col = f"pts_{k:+d}"
+        beta = np.linalg.lstsq(X_ctrl, ctrl[col].to_numpy(dtype=float), rcond=None)[0]
+        actual = tr[col].to_numpy(dtype=float)
+        rows.append({
+            "match": k,
+            "actual": float(actual.mean()),
+            "actual_ci95": [float(actual.mean() - 1.96 * actual.std(ddof=1) / np.sqrt(len(actual))),
+                            float(actual.mean() + 1.96 * actual.std(ddof=1) / np.sqrt(len(actual)))],
+            "expected": float((X_tr @ beta).mean()),
+        })
+    return {"n_changes": len(tr), "covariates": list(covariates), "matches": rows}
+
+
+def plot_event_study(es: dict, out_path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    k = [r["match"] for r in es["matches"]]
+    actual = [r["actual"] for r in es["matches"]]
+    expected = [r["expected"] for r in es["matches"]]
+    lo = [r["actual_ci95"][0] for r in es["matches"]]
+    hi = [r["actual_ci95"][1] for r in es["matches"]]
+
+    fig, ax = plt.subplots(figsize=(10, 5), facecolor=vs.SURFACE)
+    vs.style_axes(ax)
+    ax.axvspan(-0.5, max(k) + 0.5, color=vs.GRID, alpha=0.35, linewidth=0)
+    ax.fill_between(k, lo, hi, color=vs.SERIES[0], alpha=0.12, linewidth=0)
+    ax.plot(k, expected, color=vs.SERIES[1], linewidth=2, marker="o", markersize=5,
+            markeredgecolor=vs.SURFACE, markeredgewidth=1.5,
+            label="Expected anyway (similar teams that kept their coach)")
+    ax.plot(k, actual, color=vs.SERIES[0], linewidth=2, marker="o", markersize=6,
+            markeredgecolor=vs.SURFACE, markeredgewidth=1.5,
+            label=f"Teams that sacked their coach (n={es['n_changes']}, 95% band)")
+    ax.axvline(-0.5, color=vs.INK_2, linewidth=1)
+    ax.annotate("new coach", (-0.4, ax.get_ylim()[1]), xytext=(4, -14), textcoords="offset points",
+                fontsize=9, color=vs.INK_2)
+    ax.set_xticks(k, [f"{x}" if x < 0 else f"+{x + 1}" for x in k])
+    ax.set_xlabel("Matches before and after the coaching change", color=vs.INK_2)
+    ax.set_ylabel("Points per game", color=vs.INK_2)
+    ax.legend(frameon=False, fontsize=9, loc="upper left", labelcolor=vs.INK)
+    vs.title(ax, "Around a mid-season sacking, match by match")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, facecolor=vs.SURFACE)
+    plt.close(fig)
+    log.info("Saved plot -> %s", out_path)
 
 
 def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
@@ -382,6 +453,7 @@ def run() -> dict:
                     WINDOW)
         return {}
     results = estimate_effects(windows)
+    results["event_study"] = event_study(windows, tuple(results["covariates"]))
 
     # Per-change expected PPG change, from the control fit for its kind --
     # "which sackings beat what was expected anyway" (the published results
@@ -399,6 +471,7 @@ def run() -> dict:
     (out_dir / "coach_change_effect.json").write_text(json.dumps(results, indent=2))
     if all(results[k][o].get("n_treated") for k in ("mid_season", "off_season") for o in ("ppg", "xgd")):
         plot(windows, results, out_dir / "coach_change_effect.png")
+        plot_event_study(results["event_study"], out_dir / "coach_change_event_study.png")
     else:
         log.warning("Not enough coaching changes of both kinds to plot (tiny dataset?) -- skipping plot.")
 
