@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.felixnitschke.bundesliga-coach-impact.squadbackfill</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/scripts/squad_backfill.sh</string>
+    </array>
+
+    <!-- Every 4 hours while loaded. A run makes at most 400 Transfermarkt
+         requests, so the rate stays far below what triggered the firewall
+         block. Missed runs (Mac asleep) coalesce into one on wake. The job
+         removes itself once the squad data is complete. -->
+    <key>StartInterval</key>
+    <integer>14400</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/logs/squad_backfill_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/felixnitschke/Felix.com/bundesliga-coach-impact/logs/squad_backfill_launchd.log</string>
+</dict>
+</plist>

@@ -55,6 +55,10 @@ or an empty body) and stops at the first one; the squad scrape runs at 4 seconds
 request and at most 400 live requests per run, caching every page so each run continues
 where the last stopped; and the weekly refresh keeps the previous coach history if
 Transfermarkt is blocking, rather than losing the week's match data.
+To finish the scrape after the block, a temporary LaunchAgent
+(`scripts/squad_backfill.sh`, every 4 hours) runs `bundesliga squad` until the data is
+complete, then notifies and removes itself. While Transfermarkt is still blocking, a run
+costs one request and exits quietly.
 
 **Odds: the format changed in 2019-20.** Earlier seasons on football-data.co.uk carry the
 market average as Betbrain's `BbAvH/D/A` and have no closing odds; `fetch_odds.py` folds
