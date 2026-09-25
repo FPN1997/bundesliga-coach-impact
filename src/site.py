@@ -11,9 +11,10 @@ as `bundesliga predict` (predict.current_team_state + predict.forecast).
 Rebuild with `bundesliga site` after `bundesliga pipeline` /
 `bundesliga benchmark`, then commit site/ to publish.
 
-It also draws og.png, the preview card that link previews (chat apps,
-LinkedIn, X, Reddit) show for the page -- redrawn each build, so a shared
-link always shows the current numbers.
+It also draws two images, redrawn each build so they always show the
+current numbers: og.png, the card link previews (chat apps, LinkedIn, X,
+Reddit) show for the page, and sack-o-meter.png, this week's meter as a
+16:9 image to attach to the weekly post.
 """
 
 from __future__ import annotations
@@ -229,6 +230,67 @@ def draw_preview_image(data: dict, out_path: Path) -> None:
     plt.close(fig)
 
 
+METER_IMAGE = "sack-o-meter.png"
+METER_IMAGE_ROWS = 8
+
+
+def draw_meter_image(meter: dict, out_path: Path) -> None:
+    """1200x675 share image of this week's sack-o-meter: the clubs that just
+    changed coach, then the highest risks, each against the base rate."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from src import viz_style as vs
+
+    clubs = meter["clubs"]
+    changed = [c for c in clubs if c.get("changed_since_last_match")]
+    ranked = [c for c in clubs if c.get("sack_risk") is not None]
+    rows = (changed + ranked)[:METER_IMAGE_ROWS]
+    base = meter["risk_model"]["base_rate"]
+    matchday = max(c["season_matches"] for c in clubs)
+    through = pd.Timestamp(meter["data_through"]).strftime("%-d %b %Y")
+
+    fig = plt.figure(figsize=(12, 6.75), dpi=100, facecolor=vs.SURFACE)
+    fig.text(0.05, 0.9, f"BUNDESLIGA SACK-O-METER  \u00b7  AFTER MATCHDAY {matchday}", fontsize=14,
+             color=vs.INK_2, fontweight="bold")
+    fig.text(0.05, 0.815, f"Chance of a coaching change in the next {meter['risk_horizon']} matches",
+             fontsize=25, color=vs.INK, fontweight="bold")
+
+    top, row_h = 0.71, 0.072
+    coach_x, bar_x0, bar_x1 = 0.25, 0.47, 0.87  # club names up to ~"Werder Bremen" fit before coach_x
+    scale_max = max(0.4, *(c.get("sack_risk") or 0 for c in rows))
+    to_x = lambda v: bar_x0 + (bar_x1 - bar_x0) * v / scale_max  # noqa: E731
+    for i, c in enumerate(rows):
+        y = top - i * row_h
+        fig.text(0.05, y, c["team"], fontsize=17, color=vs.INK, fontweight="bold", va="center")
+        fig.text(coach_x, y, c["coach"], fontsize=14, color=vs.INK_2, va="center")
+        if c.get("changed_since_last_match"):
+            since = pd.Timestamp(c["coach_since"]).strftime("%-d %b")
+            fig.text(bar_x0, y, f"just changed: new coach since {since}", fontsize=14, color=vs.INK_2,
+                     va="center", style="italic")
+            continue
+        track = bar_x1 - bar_x0
+        fill = max(0.003, to_x(c["sack_risk"]) - bar_x0)
+        for width, color in ((track, vs.GRID), (fill, vs.DIVERGING[0])):
+            fig.patches.append(plt.Rectangle((bar_x0, y - 0.017), width, 0.034, transform=fig.transFigure,
+                                             color=color, linewidth=0))
+        fig.lines.append(plt.Line2D([to_x(base)] * 2, [y - 0.028, y + 0.028], transform=fig.transFigure,
+                                    color=vs.INK_2, linewidth=1.5))
+        fig.text(bar_x1 + 0.015, y, f"{c['sack_risk']:.0%}", fontsize=18, color=vs.INK, fontweight="bold",
+                 va="center")
+    # the base-rate line, labelled once under the last row
+    y_last = top - (len(rows) - 1) * row_h
+    fig.text(to_x(base), y_last - 0.055, f"| typical club-week: {base:.0%}", fontsize=12, color=vs.INK_2,
+             ha="left", va="center")
+
+    fig.text(0.05, 0.06, f"Data through {through}. Model trained on every Bundesliga club-week since 2014, "
+             "tested on seasons it never saw.", fontsize=12, color=vs.MUTED)
+    fig.text(0.05, 0.025, SITE_URL.removeprefix("https://").rstrip("/"), fontsize=12, color=vs.INK_2)
+    fig.savefig(out_path, dpi=100, facecolor=vs.SURFACE)
+    plt.close(fig)
+
+
 def build_site() -> Path:
     data = collect()
     page = (TEMPLATE.read_text()
@@ -240,6 +302,8 @@ def build_site() -> Path:
     out.write_text(page)
     (SITE_DIR / ".nojekyll").write_text("")
     draw_preview_image(data, SITE_DIR / "og.png")
+    if data.get("sack_o_meter"):
+        draw_meter_image(data["sack_o_meter"], SITE_DIR / METER_IMAGE)
     log.info("Built %s (%.0f KB; data through %s, next matchday: %d fixtures)", out,
              out.stat().st_size / 1024, data["meta"]["data_through"],
              len(data["next_matchday"]["fixtures"]))

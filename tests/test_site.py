@@ -70,3 +70,30 @@ def test_page_has_absolute_preview_urls_and_escaped_description(monkeypatch, tmp
     assert 'content="a &quot;quoted&quot; &lt;b&gt;"' in page
     assert "__OG_DESCRIPTION__" not in page and "__SITE_URL__" not in page
     assert (tmp_path / "og.png").exists()
+
+
+def _meter(n_clubs: int = 12) -> dict:
+    clubs = [{"team": f"Club {i}", "coach": f"Coach {i}", "season_matches": 6,
+              "sack_risk": 0.3 / (i + 1)} for i in range(n_clubs)]
+    clubs.insert(0, {"team": "Changed FC", "coach": "New Coach", "season_matches": 6,
+                     "changed_since_last_match": True, "coach_since": "2026-09-22"})
+    return {"clubs": clubs, "risk_model": {"base_rate": 0.066}, "risk_horizon": 4,
+            "data_through": "2026-09-20"}
+
+
+def test_meter_share_image_is_16_by_9(tmp_path):
+    from PIL import Image
+    site.draw_meter_image(_meter(), tmp_path / "m.png")
+    assert Image.open(tmp_path / "m.png").size == (1200, 675)
+
+
+def test_page_build_draws_the_meter_image_only_when_there_is_a_meter(monkeypatch, tmp_path):
+    data = {**_preview_data(), "next_matchday": {"fixtures": []}, "sack_o_meter": None}
+    data["meta"]["data_through"] = "2026-09-20"
+    monkeypatch.setattr(site, "collect", lambda: data)
+    monkeypatch.setattr(site, "SITE_DIR", tmp_path)
+    site.build_site()
+    assert not (tmp_path / site.METER_IMAGE).exists()
+    data["sack_o_meter"] = _meter()
+    site.build_site()
+    assert (tmp_path / site.METER_IMAGE).exists()
