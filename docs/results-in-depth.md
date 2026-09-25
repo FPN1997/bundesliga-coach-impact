@@ -131,6 +131,42 @@ already absorbs the *usual* January effect, since control windows from the same 
 include other clubs' January signings too; what it can't absorb is a sacking club
 signing more than usual.
 
+### More leagues
+
+The study is built to run on several leagues at once (`src/league_data.py`,
+`data/processed/league_matches.parquet`). The Bundesliga keeps its full pipeline. The
+Premier League, La Liga, Serie A and Ligue 1 add:
+
+- **results and xG** from Understat, 2014/15 on;
+- **odds** from football-data.co.uk, for fixture difficulty, with ratings fit within each
+  league;
+- **coaches** from Transfermarkt (`src/fetch_league_coaches.py`, run by `bundesliga
+  backfill`).
+
+Club names differ between sources ("Man United", "Manchester United"). So football-data's
+names are paired with Understat's by fixtures, not by spelling: within each league-season,
+a pairing needs at least 3 matches with the same date and score, and at least twice as
+many as any other candidate. Per season, because Understat renamed Parma after the club's
+2015 re-founding. Check: 99.15% of the 18,131 mapped odds rows are an exact Understat
+fixture (same date and clubs), and 99.99% of those have the same result. The remainder
+are late kick-offs that the two sources date a day apart.
+
+Three rules keep the pooled estimate honest:
+
+- **Complete leagues only.** A league joins only once at least 95% of its team-matches
+  have a known coach. A partly-covered league would be worse than none: a missing sacking
+  becomes a "kept their coach" comparison window.
+- **One baseline per league.** Pooled, each league gets its own intercept in the
+  comparison regression. Without them, a league whose bad runs simply recover faster
+  would look like a coaching effect; `tests/test_league_data.py` plants exactly that
+  confound and checks the intercepts remove it.
+- **Clubs stay distinct.** Windows and bootstrap clusters are keyed by league and club.
+
+The results then report every league on its own as well as pooled. As of September 2026
+only the Bundesliga has coach data (the others are 0%, blocked on Transfermarkt). On the
+combined table, every result is identical to the Bundesliga-only run, which is also how
+the change was checked.
+
 ### How this compares with published research
 
 Three peer-reviewed studies answer the same question against a comparison group, and all

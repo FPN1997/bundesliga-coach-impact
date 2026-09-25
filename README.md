@@ -55,6 +55,13 @@ matches except 10, the horizon the papers use, where the interval ends at zero. 
 read +0.19 as "small, probably between zero and +0.3", not as proven
 ([comparison](docs/results-in-depth.md#how-this-compares-with-published-research)).
 
+**More leagues are on the way.** The study is built to pool the top-5 European leagues:
+results and xG from Understat, odds from football-data.co.uk, one baseline per league.
+Four more leagues' worth of sackings (the Bundesliga alone has 65) should narrow the
+interval a lot, maybe enough to settle "small or nothing". Each league joins automatically once its coach histories
+are complete; they're downloading politely from Transfermarkt in the background
+([how](docs/results-in-depth.md#more-leagues)).
+
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 
 *Each blue dot is a mid-season sacking; the orange line is what teams in the same

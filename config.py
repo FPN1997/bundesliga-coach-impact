@@ -13,6 +13,16 @@ from __future__ import annotations
 # Verify with: soccerdata.FBref.available_leagues() if this ever errors.
 LEAGUE = "GER-Bundesliga"
 
+# The coaching-change study can pool several leagues (see src/league_data.py).
+# The Bundesliga keeps its full FBref-based pipeline; these add results and
+# xG from Understat, odds from football-data.co.uk, and coaches from
+# Transfermarkt (`bundesliga backfill`). A league enters the study only once
+# at least LEAGUE_MIN_COACH_COVERAGE of its team-matches have a coach.
+OTHER_LEAGUES = ["ENG-Premier League", "ESP-La Liga", "ITA-Serie A", "FRA-Ligue 1"]
+LEAGUE_LABELS = {"GER-Bundesliga": "Bundesliga", "ENG-Premier League": "Premier League",
+                 "ESP-La Liga": "La Liga", "ITA-Serie A": "Serie A", "FRA-Ligue 1": "Ligue 1"}
+LEAGUE_MIN_COACH_COVERAGE = 0.95
+
 # Seasons to pull, soccerdata format ("2019-2020" style strings).
 # Keep this list short while you're developing the pipeline -- each season
 # is several dozen HTTP requests against FBref/Understat.

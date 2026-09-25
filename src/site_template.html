@@ -151,6 +151,12 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
   <section id="effect">
     <h2>Most of the "new coach bounce" happens anyway</h2>
     <p id="effect-text"></p>
+    <p class="note" id="league-note"></p>
+    <div class="card" id="league-card" hidden>
+      <p class="chart-title">League by league</p>
+      <p class="chart-sub">Mid-season sackings in each league, each against its own clubs that kept their coach</p>
+      <div id="league-table"></div>
+    </div>
     <div class="card">
       <p class="chart-title">Match by match: points before and after a mid-season sacking</p>
       <p class="chart-sub" id="es-sub"></p>
@@ -509,6 +515,25 @@ para($("effect-text"), [
     : []),
 ]);
 $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.ppg.n_control_windows.toLocaleString("en")} comparison windows. Hover a dot for the details.`;
+// ---------- which leagues are in the study --------------------------------------
+const LL = CE.league_labels || {}, leagueName = (code) => LL[code] || code;
+const multiLeague = (CE.results.leagues || []).length > 1;
+(function leagues() {
+  const inc = CE.results.leagues || [], cov = CE.results.league_coach_coverage || {};
+  const waiting = Object.keys(cov).filter(l => !inc.includes(l)).sort();
+  const perLeague = (l) => CE.sackings.filter(p => (p.league || inc[0]) === l).length;
+  const parts = ["In the study: ", { b: inc.map(l => `${leagueName(l)} (${perLeague(l)} mid-season sackings)`).join(", ") }, "."];
+  if (waiting.length) parts.push(` Coach histories are still being collected for ${waiting.map(leagueName).join(", ")}; each joins automatically once at least 95% of its matches have a known coach.`);
+  para($("league-note"), parts);
+  const BL = CE.results.by_league;
+  if (!multiLeague || !BL) return;
+  $("league-card").hidden = false;
+  const ci = (r) => r && r.effect_ci95 ? `${fmt(r.effect)} (${fmt(r.effect_ci95[0])} to ${fmt(r.effect_ci95[1])})` : "\u2014";
+  table($("league-table"), ["League", "Sackings", "Points per game beyond expected", "xG difference beyond expected"],
+    [...Object.keys(BL).sort().map(l => [leagueName(l), String(BL[l].ppg.n_treated || 0), ci(BL[l].ppg), ci(BL[l].xgd)]),
+     ["All leagues, pooled", String(mid.ppg.n_treated), ci(mid.ppg), ci(mid.xgd)]], [1, 2, 3]);
+})();
+
 // ---------- event study: match by match around the change -------------------
 (function eventStudy() {
   const ES = CE.results.event_study;
@@ -593,14 +618,14 @@ $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.p
     const g = el("g", {}, svg);
     el("circle", { cx: x(p.ppg_before + jx), cy: y(p.delta), r: 12, fill: "transparent" }, g);
     el("circle", { cx: x(p.ppg_before + jx), cy: y(p.delta), r: 5, fill: "var(--s1)", stroke: "var(--surface)", "stroke-width": 2 }, g);
-    hover(g, `${p.team} · ${month(p.date)} · ${p.coach_out} → ${p.coach_in}`, [
+    hover(g, `${p.team}${multiLeague ? ` (${leagueName(p.league)})` : ""} · ${month(p.date)} · ${p.coach_out} → ${p.coach_in}`, [
       [`${p.ppg_before.toFixed(2)} → ${p.ppg_after.toFixed(2)}`, "PPG before → after"],
       [fmt(p.expected), "change expected anyway"],
       [fmt(p.excess), "beyond expectation"],
     ]);
   });
   table($("scatter-table"), ["Team", "Date", "Out → in", "PPG before", "PPG after", "Expected change", "Beyond expected"],
-    [...pts].sort((a, b) => b.excess - a.excess).map(p => [p.team, p.date, `${p.coach_out} → ${p.coach_in}`, p.ppg_before.toFixed(2), p.ppg_after.toFixed(2), fmt(p.expected), fmt(p.excess)]), [3, 4, 5, 6]);
+    [...pts].sort((a, b) => b.excess - a.excess).map(p => [multiLeague ? `${p.team} (${leagueName(p.league)})` : p.team, p.date, `${p.coach_out} → ${p.coach_in}`, p.ppg_before.toFixed(2), p.ppg_after.toFixed(2), fmt(p.expected), fmt(p.excess)]), [3, 4, 5, 6]);
 })();
 
 // ---------- effect forest plot ---------------------------------------------

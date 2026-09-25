@@ -40,7 +40,7 @@ from src.transfermarkt_search import search_club_id
 
 log = logging.getLogger(__name__)
 
-LEAGUES = ["ENG-Premier League", "ESP-La Liga", "ITA-Serie A", "FRA-Ligue 1"]
+LEAGUES = config.OTHER_LEAGUES
 
 # Understat name -> how transfermarkt.de names the club (German exonyms and
 # names too ambiguous to search on their own, e.g. "Inter").
@@ -50,7 +50,6 @@ TM_NAMES = {
     "Nice": "OGC Nizza", "Athletic Club": "Athletic Bilbao",
 }
 
-UNDERSTAT_PATH = Path(config.RAW_DIR) / "understat_other_leagues.parquet"
 IDS_PATH = Path("data/club_transfermarkt_ids_other_leagues.json")
 OUT_PATH = Path(config.PROCESSED_DIR) / "coach_history_other_leagues.csv"
 STATUS_PATH = Path(config.PROCESSED_DIR) / "coach_history_other_leagues_status.json"
@@ -61,15 +60,13 @@ def cache_path(league: str, club: str) -> Path:
 
 
 def league_clubs() -> dict[str, list[str]]:
-    """Every club per league since config.SEASONS[0], from Understat (cached by soccerdata)."""
-    import soccerdata as sd
+    """Every club per league since config.SEASONS[0], from Understat -- the
+    file the weekly pipeline refreshes (src/league_data.py), fetched here
+    only if it doesn't exist yet."""
+    from src import league_data
 
-    if UNDERSTAT_PATH.exists():
-        df = pd.read_parquet(UNDERSTAT_PATH)
-    else:
-        df = sd.Understat(leagues=LEAGUES, seasons=config.SEASONS).read_team_match_stats().reset_index()
-        UNDERSTAT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(UNDERSTAT_PATH, index=False)
+    path = league_data.understat_path()
+    df = pd.read_parquet(path) if path.exists() else league_data.fetch_understat_other_leagues()
     return {league: sorted(set(g["home_team"]) | set(g["away_team"])) for league, g in df.groupby("league")}
 
 

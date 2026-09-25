@@ -104,9 +104,12 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW, after: int | None
     `window` matches before, `after` matches from the change on (default:
     the same number)."""
     after = window if after is None else after
-    matches = matches.dropna(subset=["points"]).sort_values(["team", "date"])
+    # league-aware: two clubs with the same name in different leagues stay apart
+    keys = ["league", "team"] if "league" in matches else ["team"]
+    matches = matches.dropna(subset=["points"]).sort_values([*keys, "date"])
     rows = []
-    for team, g in matches.groupby("team"):
+    for key, g in matches.groupby(keys):
+        league, team = key if len(keys) == 2 else (None, key[0] if isinstance(key, tuple) else key)
         points = g["points"].to_numpy(dtype=float)
         xgd = (g["xg"] - g["xga"]).to_numpy(dtype=float)
         gd = (g["gf"] - g["ga"]).to_numpy(dtype=float) if {"gf", "ga"} <= set(g) else np.full(len(g), np.nan)
@@ -136,6 +139,7 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW, after: int | None
                                                    else post.mean() - pre.mean())
             rows.append({
                 **changes,
+                **({"league": league} if league is not None else {}),
                 "team": team,
                 "date": dates[i],
                 "kind": kind,
@@ -173,8 +177,10 @@ class _AdjustedEstimator:
     def __init__(self, windows: pd.DataFrame, outcome: str, covariates: tuple[str, ...] = BASE_COVARIATES):
         self.COVARIATES = covariates
         w = windows.dropna(subset=[f"{outcome}_before", f"{outcome}_after", *self.COVARIATES])
-        self.teams = np.array(sorted(w["team"].unique()))
-        team_idx = w["team"].map({t: k for k, t in enumerate(self.teams)}).to_numpy()
+        # bootstrap clusters: a club (within its league, when there are several)
+        cluster = w["league"] + "|" + w["team"] if "league" in w else w["team"]
+        self.teams = np.array(sorted(cluster.unique()))
+        team_idx = cluster.map({t: k for k, t in enumerate(self.teams)}).to_numpy()
         delta = (w[f"{outcome}_after"] - w[f"{outcome}_before"]).to_numpy()
         X = np.column_stack([np.ones(len(w)), w[list(self.COVARIATES)].to_numpy()])
         is_ctrl = (w["kind"] == "control").to_numpy()
@@ -225,8 +231,21 @@ class _AdjustedEstimator:
         }
 
 
-def estimate_effects(windows: pd.DataFrame) -> dict:
-    base = _AdjustedEstimator.BASE_COVARIATES
+def league_dummies(w: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """One intercept per league when the windows span several (the first
+    league alphabetically is the baseline): each league's comparison windows
+    set its own baseline, so a league where bad runs recover faster can't
+    pass for a coaching effect. A single league adds nothing."""
+    if "league" not in w or w["league"].nunique() < 2:
+        return w, []
+    leagues = sorted(w["league"].unique())
+    names = [f"league_{lg}" for lg in leagues[1:]]
+    return w.assign(**{n: (w["league"] == lg).astype(float) for n, lg in zip(names, leagues[1:],
+                                                                            strict=True)}), names
+
+
+def estimate_effects(windows: pd.DataFrame, extra_covariates: tuple[str, ...] = ()) -> dict:
+    base = (*_AdjustedEstimator.BASE_COVARIATES, *extra_covariates)
     extra = ["fixture_change"] if "fixture_change" in windows else []
     squad = [c for c in SQUAD_COVARIATES if c in windows]
     if squad:
@@ -325,6 +344,8 @@ def horizon_sensitivity(matches: pd.DataFrame, covariates: tuple[str, ...],
     rows = []
     for h in horizons:
         w = build_windows(matches, after=h)
+        w, dummies = league_dummies(w)
+        covariates = (*covariates, *(d for d in dummies if d not in covariates))
         mid = w[w["in_season"]] if not w.empty else w
         if not _has_both_kinds(mid):
             continue
@@ -350,7 +371,8 @@ def published_designs(matches: pd.DataFrame, covariates: tuple[str, ...]) -> lis
         return w.assign(level_before=0.0, level_after=w[col])
 
     def effect(w: pd.DataFrame, col: str, covariates: list[str]) -> dict:
-        est = _AdjustedEstimator(level(w, col), "level", tuple(covariates))
+        w, dummies = league_dummies(w)
+        est = _AdjustedEstimator(level(w, col), "level", (*covariates, *dummies))
         summary = est.estimate()
         if not summary["n_treated"]:
             return {"n_treated": 0}
@@ -358,6 +380,7 @@ def published_designs(matches: pd.DataFrame, covariates: tuple[str, ...]) -> lis
                 "effect_ci95": est.bootstrap()["effect_ci95"]}
 
     def ours(w: pd.DataFrame) -> dict:
+        w, _ = league_dummies(w)
         est = _AdjustedEstimator(w, "ppg", tuple(c for c in covariates if c in w))
         summary = est.estimate()
         return {"n_treated": summary["n_treated"], "effect": summary["effect"],
@@ -522,11 +545,49 @@ def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
     log.info("Saved plot -> %s", out_path)
 
 
+def study_matches() -> tuple[pd.DataFrame, pd.DataFrame | None, dict]:
+    """(matches, odds, league info) for the study: every league with complete
+    coach data from data/processed/league_matches.parquet (src/league_data.py),
+    or the Bundesliga alone if that file hasn't been built."""
+    from src import league_data
+
+    if not league_data.out_path().exists():
+        return (pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet"), load_odds(),
+                {"included": [config.LEAGUE], "coverage": {}})
+    matches = pd.read_parquet(league_data.out_path())
+    coverage = league_data.coach_coverage(matches)
+    included = league_data.included_leagues(matches)
+    excluded = sorted(set(coverage) - set(included))
+    if excluded:
+        log.info("Leagues not in the study yet (coach data incomplete): %s",
+                 ", ".join(f"{lg} {coverage[lg]:.0%}" for lg in excluded))
+    matches = matches[matches["league"].isin(included)].reset_index(drop=True)
+    return matches, league_data.all_odds(), {"included": included, "coverage": coverage}
+
+
+def by_league(windows: pd.DataFrame, covariates: tuple[str, ...]) -> dict:
+    """The mid-season effect within each league on its own (no league intercepts needed)."""
+    out = {}
+    for league, w in windows[windows["in_season"]].groupby("league"):
+        covs = tuple(c for c in covariates if not c.startswith("league_"))
+        out[league] = {}
+        for outcome in ("ppg", "xgd"):
+            est = _AdjustedEstimator(w, outcome, covs)
+            summary = est.estimate()
+            if summary["n_treated"]:
+                summary.update(est.bootstrap())
+            out[league][outcome] = summary
+    return out
+
+
 def run() -> dict:
-    matches = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
-    odds = load_odds()
+    matches, odds, leagues = study_matches()
     if odds is not None:
-        matches["fixture_ease"] = fixture_ease(matches, odds)
+        if "league" in matches and "league" in odds:
+            from src.league_data import fixture_ease_by_league
+            matches["fixture_ease"] = fixture_ease_by_league(matches, odds)
+        else:
+            matches["fixture_ease"] = fixture_ease(matches, odds)
         log.info("Fixture ratings for %.1f%% of matches", 100 * matches["fixture_ease"].notna().mean())
     else:
         log.warning("No odds file -- estimating without the fixture-difficulty adjustment "
@@ -543,7 +604,12 @@ def run() -> dict:
         log.warning("No coaching changes with full %d-match windows either side -- nothing to estimate.",
                     WINDOW)
         return {}
-    results = estimate_effects(windows)
+    windows, dummies = league_dummies(windows)
+    results = estimate_effects(windows, tuple(dummies))
+    results["leagues"] = leagues["included"]
+    results["league_coach_coverage"] = leagues["coverage"]
+    if len(leagues["included"]) > 1:
+        results["by_league"] = by_league(windows, tuple(results["covariates"]))
     results["event_study"] = event_study(windows, tuple(results["covariates"]))
     # the same view for chance quality: was the collapse before a sacking bad
     # luck, or did the underlying performance drop too?

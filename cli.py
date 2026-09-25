@@ -1,7 +1,7 @@
 """
 One entry point for the whole project.
 
-    bundesliga pipeline [--skip-fetch]      fetch (incl. odds) -> merge -> coach impact/effect -> formations
+    bundesliga pipeline [--skip-fetch]      fetch (incl. odds, other leagues) -> merge -> analyses
     bundesliga train [--variant ...]        outcome predictor (actual-formation and/or pre-match)
     bundesliga tune --method ...            hyperparameter tuning: grid | embargoed | optuna
     bundesliga native-categorical           XGBoost native-categorical-split experiment
@@ -76,6 +76,17 @@ def refresh_coach_history(fetch) -> None:
                     exc)
 
 
+def refresh_other_leagues() -> None:
+    """The other leagues only feed the coaching-change study, so a failure
+    there (Understat or football-data.co.uk down) keeps last week's files
+    rather than failing the Bundesliga refresh."""
+    from src.league_data import fetch_other_leagues
+    try:
+        fetch_other_leagues()
+    except Exception as exc:
+        log.warning("Other-league refresh failed (%s) -- keeping the previous files", exc)
+
+
 # --- commands -------------------------------------------------------------
 
 def cmd_pipeline(args) -> None:
@@ -83,6 +94,7 @@ def cmd_pipeline(args) -> None:
     from src.coach_change_effect import run as estimate_coach_change_effect
     from src.coach_impact import compute_coach_impact
     from src.formation_matrix import build_formation_matrix, coach_preferred_formations
+    from src.league_data import build_league_matches
     from src.sack_o_meter import run as update_sack_o_meter
 
     if args.skip_fetch:
@@ -92,18 +104,21 @@ def cmd_pipeline(args) -> None:
         from src.fetch_fbref import fetch_fbref_matches
         from src.fetch_odds import fetch_odds
         from src.fetch_understat import fetch_understat_matches
-        log.info("Step 1/6: FBref (results + formations)")
+        log.info("Step 1/7: FBref (results + formations)")
         fetch_fbref_matches()
-        log.info("Step 2/6: Understat (xG, PPDA, deep completions)")
+        log.info("Step 2/7: Understat (xG, PPDA, deep completions)")
         fetch_understat_matches()
-        log.info("Step 3/6: Coach tenure history (Transfermarkt)")
+        log.info("Step 3/7: Coach tenure history (Transfermarkt)")
         refresh_coach_history(fetch_coach_history)
-        log.info("Step 4/6: Betting odds (football-data.co.uk, for fixture difficulty)")
+        log.info("Step 4/7: Betting odds (football-data.co.uk, for fixture difficulty)")
         fetch_odds()
+        log.info("Step 5/7: Other leagues: results, xG and odds (Understat, football-data.co.uk)")
+        refresh_other_leagues()
 
-    log.info("Step 5/6: Merging into match_dataset.parquet")
+    log.info("Step 6/7: Merging into match_dataset.parquet and league_matches.parquet")
     build_dataset()
-    log.info("Step 6/6: Analysis")
+    build_league_matches()
+    log.info("Step 7/7: Analysis")
     compute_coach_impact()
     estimate_coach_change_effect()
     update_sack_o_meter()  # weekly: runs with every refresh

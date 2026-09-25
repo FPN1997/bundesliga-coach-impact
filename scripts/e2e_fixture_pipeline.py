@@ -193,6 +193,14 @@ def main() -> None:
             "every fixture row should join Understat xG (team names match by construction)"
         )
 
+        print("== league_data.build_league_matches ==")
+        # No other-league files in the fixture: the combined table is just the
+        # Bundesliga, and the study must run on it unchanged.
+        from src.league_data import build_league_matches
+        league_matches = build_league_matches()
+        assert list(league_matches["league"].unique()) == [config.LEAGUE]
+        assert len(league_matches) == len(matches)
+
         print("== coach_impact ==")
         impact = compute_coach_impact()
         assert len(impact) == 1, f"expected exactly 1 coaching change (Fixture United), got {len(impact)}"

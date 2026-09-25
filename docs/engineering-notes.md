@@ -115,6 +115,34 @@ leagues take about 100 club pages plus a search for each, well within one backfi
 budget once the block has cleared (`src/fetch_league_coaches.py`, first in the backfill's
 priority order).
 
+### Other leagues: Understat, football-data.co.uk, and a byte-order mark
+
+The other top-5 leagues skip FBref entirely, because the coaching-change study doesn't
+need formations. Their data comes from three places:
+
+- **Results and xG:** Understat, via soccerdata (`data/raw/understat_other_leagues.parquet`).
+- **Odds:** football-data.co.uk (`data/raw/football_data_odds_other_leagues.parquet`), with
+  club names paired to Understat's by fixtures (see results-in-depth).
+- **Coaches:** Transfermarkt, through the backfill.
+
+`bundesliga pipeline` refreshes the first two every week. If either source is down, the
+refresh keeps last week's files instead of failing the Bundesliga update.
+
+Two surprises came up while building it:
+
+- **A missing season.** Read in one call, soccerdata silently dropped the Premier League's
+  2021-22 season. football-data.co.uk's file for that season starts with a UTF-8 byte-order
+  mark, so soccerdata can't find its first column. Read on its own, the season fails
+  loudly instead. The fetcher now reads one league-season at a time, and on that failure it
+  strips the mark from soccerdata's cached copy and retries once.
+- **A cross-season name match.** The first name matching ran per league. Understat calls
+  Parma "Parma" before its 2015 re-founding and "Parma Calcio 1913" after, so one of the
+  two eras got no odds. Matching per league-season fixed it.
+
+The data guard (`src/data_guard.py`) caught one bad intermediate version of the matching.
+An over-strict vote rule mapped almost nothing, and the guard refused to overwrite 17,742
+rows with 548.
+
 ## Keeping team names in sync across four sources
 
 FBref, Understat, Transfermarkt and football-data.co.uk each spell clubs differently

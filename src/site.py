@@ -64,7 +64,8 @@ def _coach_effect() -> dict:
     tr["delta"] = tr["ppg_after"] - tr["ppg_before"]
     tr["excess"] = tr["delta"] - tr["ppg_expected_change"]
     sackings = [
-        {"team": r.team, "date": pd.Timestamp(r.date).strftime("%Y-%m-%d"),
+        {"team": r.team, "league": getattr(r, "league", config.LEAGUE),
+         "date": pd.Timestamp(r.date).strftime("%Y-%m-%d"),
          "coach_out": r.coach_out, "coach_in": r.coach_in,
          "ppg_before": round(r.ppg_before, 3), "ppg_after": round(r.ppg_after, 3),
          "delta": round(r.delta, 3), "expected": round(r.ppg_expected_change, 3),
@@ -72,7 +73,7 @@ def _coach_effect() -> dict:
         for r in tr.sort_values("date").itertuples()
     ]
     return {"results": results, "control_curve": curve, "sackings": sackings,
-            "window": results["window_matches"]}
+            "window": results["window_matches"], "league_labels": config.LEAGUE_LABELS}
 
 
 def _benchmark() -> dict:
