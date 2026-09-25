@@ -153,6 +153,17 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
     </div>
   </section>
 
+  <section id="research">
+    <h2>Compared with published research</h2>
+    <p id="lit-text"></p>
+    <div class="card">
+      <p class="chart-title">Effect of a mid-season sacking on points per game, by study design</p>
+      <p class="chart-sub">Mid-season changes, 95% intervals. Hover a row for details.</p>
+      <div id="lit-forest"></div>
+      <p class="note" id="lit-note"></p>
+    </div>
+  </section>
+
   <section id="market">
     <h2>How good are the match forecasts? Measured against the betting market</h2>
     <p id="market-text"></p>
@@ -303,8 +314,9 @@ const implied = CE.results.mid_season.ppg_implied_by_xgd_effect;
 para($("lede"), [
   "Teams that sack their coach mid-season do improve. But teams in the same slump that ",
   { b: "kept" }, " their coach improve by about two thirds as much — bad runs end on their own. ",
-  `The change itself is worth a real but modest amount \u2014 about ${fmt(mid.ppg.effect, 1)} points per game, `,
-  "a third of the raw bounce \u2014 and it shows up in chance quality too.",
+  `What's left for the change itself is small \u2014 about ${fmt(mid.ppg.effect, 1)} points per game, `,
+  "a third of the raw bounce, and it shows up in chance quality too. Published studies find no clear effect at all; ",
+  "run through their designs, this data gives a smaller, less certain +0.1.",
 ]);
 const tiles = [
   ["Improvement after a mid-season sacking", fmt(mid.ppg.raw_change), `points per game, next ${CE.window} matches vs. last ${CE.window} (n=${mid.ppg.n_treated})`],
@@ -458,6 +470,58 @@ $("effect-sub").textContent = `${mid.ppg.n_treated} mid-season sackings, ${mid.p
   const s = [...CE.sackings].sort((a, b) => b.excess - a.excess);
   const pick = [...s.slice(0, 4), ...s.slice(-3)];
   table($("excess-table"), ["Change", "", "Beyond exp."], pick.map(p => [`${p.team}, ${month(p.date)}`, `${p.coach_out} → ${p.coach_in}`, fmt(p.excess)]), [2]);
+})();
+
+// ---------- published research ---------------------------------------------
+(function research() {
+  const PD = CE.results.published_designs, HS = CE.results.horizon_sensitivity;
+  if (!PD || !PD.length) { $("research").hidden = true; return; }
+  const link = (text, href) => { const a = html("a", text); a.href = href; return a; };
+  const t = $("lit-text");
+  t.replaceChildren();
+  t.append("Three peer-reviewed studies test the same question against a comparison group, and all three find no detectable effect: ",
+    link("Heuer et al. (2011)", "https://doi.org/10.1371/journal.pone.0017664"), " on the Bundesliga 1963\u20132009, ",
+    link("van Ours & van Tuijl (2016)", "https://doi.org/10.1111/ecin.12280"), " on the Dutch league, and ",
+    link("Lundkvist et al. (2026)", "https://doi.org/10.1080/02640414.2026.2698238"),
+    " on 331 changes across Europe. To tell different data apart from different methods, this data was run through the two designs that can be reproduced from match results.");
+  const find = (study, design) => PD.find(r => r.study.startsWith(study) && r.outcome === "points per game" && (design ? r.design.startsWith(design) : !r.design.startsWith("same")));
+  const h10 = (HS || []).find(r => r.matches_after === 10);
+  // Heuer et al. report +0.018 ± 0.036 points per match (standard error), Bundesliga 1963/64-2008/09
+  const heuerPub = { effect: 0.018, effect_ci95: [0.018 - 1.96 * 0.036, 0.018 + 1.96 * 0.036] };
+  const rows = [
+    ["This project", `8 matches after, n=${mid.ppg.n_treated}`, mid.ppg, "var(--s1)"],
+    ...(h10 ? [["This project", `10 matches after, n=${h10.n_treated}`, h10, "var(--s1)"]] : []),
+    ["Heuer et al.'s design, this data", `n=${find("Heuer").n_treated}`, find("Heuer"), "var(--ink-2)"],
+    ["Lundkvist et al.'s design, this data", `n=${find("Lundkvist").n_treated}`, find("Lundkvist"), "var(--ink-2)"],
+    ["Heuer et al., as published", "1963\u20132009, n=154", heuerPub, "var(--s2)"],
+  ];
+  // labels sit above each interval, so the chart keeps its full width on a phone
+  // drawn at the container's own width, so the text stays full size on a phone
+  const W = Math.min(900, Math.max(320, $("lit-forest").clientWidth || 600)), rowH = 74, m = { l: 16, r: 48, t: 4, b: 30 }, H = m.t + rows.length * rowH + m.b;
+  const lo = Math.min(-0.2, ...rows.map(r => r[2].effect_ci95[0])), hi = Math.max(0.4, ...rows.map(r => r[2].effect_ci95[1]));
+  const x = scale(lo, hi, m.l, W - m.r);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Effect estimates under different study designs" }, $("lit-forest"));
+  for (const v of ticks(lo, hi, 0.1)) el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: Math.abs(v) < 1e-9 ? "var(--ink-2)" : "var(--grid)", "stroke-width": 1 }, svg);
+  axisX(svg, x, H - m.b - 4, ticks(lo, hi, 0.1), null, W, (v) => Math.abs(v) < 1e-9 ? "0" : fmt(v, 1));
+  rows.forEach(([name, sub, r, color], i) => {
+    const top = m.t + i * rowH, cy = top + 50;
+    const label = txt("text", { x: m.l, y: top + 18, style: "fill:var(--ink);font-size:15px;font-weight:600;paint-order:stroke;stroke:var(--surface);stroke-width:5px;stroke-linejoin:round" }, name, svg);
+    const detail = el("tspan", { dx: 8, style: "fill:var(--muted);font-size:13px;font-weight:400" }, label);
+    detail.textContent = sub;
+    const g = el("g", {}, svg);
+    el("rect", { x: m.l, y: cy - 16, width: W - m.l - m.r, height: 32, fill: "transparent" }, g);
+    el("line", { x1: x(r.effect_ci95[0]), x2: x(r.effect_ci95[1]), y1: cy, y2: cy, stroke: color, "stroke-width": 3, "stroke-linecap": "round" }, g);
+    el("circle", { cx: x(r.effect), cy, r: 7, fill: color, stroke: "var(--surface)", "stroke-width": 2 }, g);
+    txt("text", { x: x(r.effect_ci95[1]) + 8, y: cy + 5, style: "fill:var(--ink);font-size:14px;font-weight:600" }, fmt(r.effect), g);
+    hover(g, `${name}: ${sub}`, [[fmt(r.effect), "points per game"], [`${fmt(r.effect_ci95[0])} to ${fmt(r.effect_ci95[1])}`,
+      "95% interval \u2014 " + (r.effect_ci95[0] > 0 ? "excludes zero" : "includes zero")]]);
+  });
+  para($("lit-note"), [
+    "Every design gives a positive estimate on this data, from ",
+    { b: `${fmt(Math.min(...rows.slice(0, -1).map(r => r[2].effect)))} to ${fmt(mid.ppg.effect)}` },
+    " points per game, but under the published designs the intervals include zero, just as in the papers. On the same matches, this project's adjustment changes little; the difference comes mostly from which matches are compared. ",
+    "Everyone agrees that most of the bounce is regression to the mean. What's left is small, probably somewhere between zero and +0.3 points per game, and not proven.",
+  ]);
 })();
 
 // ---------- market benchmark ------------------------------------------------

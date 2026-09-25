@@ -165,3 +165,17 @@ def test_event_study_after_gap_is_the_headline_effect_and_before_gap_is_zero():
     assert headline == pytest.approx(0.4, abs=0.15)
     # mechanical, not evidence of a good comparison: ppg_before is a covariate
     assert np.mean([gap[k] for k in range(-W, 0)]) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_windows_can_measure_a_different_number_of_matches_after():
+    df = _team(["A"] * 8 + ["B"] * 8)
+    df["points"] = [float(i % 4) for i in range(16)]
+    df["gf"], df["ga"] = [float(i % 3) for i in range(16)], [1.0] * 16
+    w = cce.build_windows(df, window=3, after=5)
+    t = w[w["kind"] == "treated"].iloc[0]
+    assert [t[f"pts_{k:+d}"] for k in range(-3, 5)] == list(df["points"].iloc[5:13])
+    assert t["ppg_after"] == pytest.approx(df["points"].iloc[8:13].mean())
+    assert t["gd_before"] == pytest.approx((df["gf"] - df["ga"]).iloc[5:8].mean())
+    assert t["gd_after"] == pytest.approx((df["gf"] - df["ga"]).iloc[8:13].mean())
+    # windows need `after` matches left, so the last control starts 5 from the end
+    assert w["date"].max() <= df["date"].iloc[-5]

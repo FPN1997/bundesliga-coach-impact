@@ -131,6 +131,73 @@ already absorbs the *usual* January effect, since control windows from the same 
 include other clubs' January signings too; what it can't absorb is a sacking club
 signing more than usual.
 
+### How this compares with published research
+
+Three peer-reviewed studies answer the same question against a comparison group, and all
+three find no detectable effect of a mid-season sacking:
+
+| Study | Data | Design | Finding |
+|---|---|---|---|
+| Heuer, Müller, Rubner, Hagemann & Strauss (2011), [*PLoS ONE* 6(3): e17664](https://doi.org/10.1371/journal.pone.0017664) | Bundesliga 1963/64–2008/09, 154 in-season dismissals | 10 matches before and after; about 100 control teams per dismissal with the same goal difference before | +0.018 ± 0.036 points per match (standard error): "basically no effect" |
+| van Ours & van Tuijl (2016), [*Economic Inquiry* 54(1): 591–604](https://doi.org/10.1111/ecin.12280) | Eredivisie, 14 seasons | a control group of coach replacements that were likely but did not happen | teams improve after a change, but the control group improves too: no effect |
+| Lundkvist, Holmström, Pérez-Ferreirós & Kalén (2026), [*J. Sports Sciences* 44(13): 1760–1768](https://doi.org/10.1080/02640414.2026.2698238) | 331 changes, first and second divisions of Europe's top five countries, 2017/18–2021/22 | matched on identical five-match points trajectories; points and expected points over the next 10 matches | −0.18 to +0.13 points per match across specifications, every interval including zero |
+
+One Bundesliga study points the other way. Kleinknecht & Würtenberger (2022),
+[*Managerial and Decision Economics* 43(3): 791–812](https://doi.org/10.1002/mde.3419), use a
+synthetic-control design and report performance improvements after within-season
+changes. The paper is paywalled, so its effect size isn't compared here.
+
+**Our data through their designs.** To separate "different data" from "different method",
+`published_designs()` reruns this project's data (2014/15 on) with the two designs that
+can be reproduced from match data. Both compare the level after the change with teams
+matched on the before period:
+
+| Mid-season, this project's data | n | Points per game | Second outcome |
+|---|---|---|---|
+| This project's design: 8 matches before/after, adjusted for PPG, xG and fixtures | 65 | **+0.19** (+0.04 to +0.30) | xG difference +0.31 (+0.11 to +0.46) |
+| Heuer et al.'s design: 10 before/after, matched on goal difference | 48 | +0.11 (−0.05 to +0.22) | goal difference +0.15 (−0.12 to +0.36) |
+| … same windows, this project's adjustment | 48 | +0.11 (−0.03 to +0.22) | |
+| Lundkvist et al.'s design: matched on the last 5 results, 10 matches after | 65 | +0.12 (−0.04 to +0.27) | xG difference +0.20 (−0.04 to +0.41) |
+| … same windows, this project's adjustment | 65 | +0.15 (+0.02 to +0.27) | |
+
+Measured this project's way, the result doesn't hinge on the choice of 8 matches
+(`horizon_sensitivity()`, always 8 matches before; longer horizons lose late-season
+sackings):
+
+| Matches measured after the change | 4 | 6 | 8 | 10 | 12 |
+|---|---|---|---|---|---|
+| Sackings | 76 | 72 | 65 | 54 | 51 |
+| Points effect | +0.17 | +0.18 | +0.19 | +0.13 | +0.18 |
+| 95% interval | +0.02 to +0.30 | +0.05 to +0.28 | +0.04 to +0.30 | −0.00 to +0.24 | +0.06 to +0.29 |
+
+**Reading it.** Every study agrees that most of the bounce is regression to the mean. On
+this data, every design gives a *positive* estimate of what's left, from +0.11 to +0.19
+points per game. Under the published designs the intervals include zero, the same verdict
+those papers reached; under this project's design they clear zero at every horizon except
+10 matches, where the interval ends at zero. So the fair statement is a small effect, most
+likely somewhere between zero and +0.3 points per game, rather than a proven one.
+Heuer et al.'s 1963–2009 estimate (95% roughly −0.05 to +0.09) overlaps the bottom of
+this project's interval.
+
+What moves the number is mostly *which matches are compared*, not how the adjustment is
+done. On the same windows, this project's adjustment gives the same +0.11 as matching on
+goal difference, and +0.15 against +0.12 for matching on the last five results. The
+published designs use 10 matches after the change, the horizon where the estimate
+happens to be weakest here, and Heuer et al.'s 10 matches on both sides drop 17 of the 65
+sackings: coaches who hadn't managed 10 games yet, and changes with fewer than 10 matches
+left in the season. All of these differences sit well within
+each other's intervals: this is a small effect measured with noise, not a contradiction.
+
+**The collapse before a sacking: luck or real?** Lundkvist et al. found results collapsing
+before a dismissal (1.28 → 0.34 points per match) while expected points stayed stable, and
+concluded that clubs react to bad luck. The same collapse in results shows up here (0.35
+and 0.15 points in the last two matches), but chance quality doesn't stay stable
+(`event_study_xgd` in the output). Until three matches before the change, sacked teams'
+xG difference was, if anything, better than expected. Then it fell to −0.83 and −1.08 per
+game, against about −0.49 expected, and the interval for the final match (−1.38 to −0.77)
+is well clear of it. In the Bundesliga, the last straw before a sacking is usually a
+genuinely bad performance, not only a bad result.
+
 **Limitations.** 65 mid-season changes is still a modest sample; the windows are 8
 matches; the adjustment is linear in three variables; and clubs don't sack at random — a
 club might sack precisely when it expects the run to continue, which would bias the

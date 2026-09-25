@@ -99,19 +99,23 @@ def transfer_window_open(start: pd.Timestamp, end: pd.Timestamp) -> bool:
     return any(a <= end and start <= b for a, b in _TRANSFER_WINDOWS)
 
 
-def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
-    """One row per treated or control window (see module docstring)."""
+def build_windows(matches: pd.DataFrame, window: int = WINDOW, after: int | None = None) -> pd.DataFrame:
+    """One row per treated or control window (see module docstring):
+    `window` matches before, `after` matches from the change on (default:
+    the same number)."""
+    after = window if after is None else after
     matches = matches.dropna(subset=["points"]).sort_values(["team", "date"])
     rows = []
     for team, g in matches.groupby("team"):
         points = g["points"].to_numpy(dtype=float)
         xgd = (g["xg"] - g["xga"]).to_numpy(dtype=float)
+        gd = (g["gf"] - g["ga"]).to_numpy(dtype=float) if {"gf", "ga"} <= set(g) else np.full(len(g), np.nan)
         coach = g["coach"].to_numpy(dtype=object)
         season = g["season"].astype(str).to_numpy()
         dates = g["date"].to_numpy()
         per_match = {col: g[col].to_numpy(dtype=float) for col in PER_MATCH_CHANGES if col in g}
-        for i in range(window, len(g) - window + 1):
-            span = coach[i - window:i + window]
+        for i in range(window, len(g) - after + 1):
+            span = coach[i - window:i + after]
             if pd.isna(span).any():
                 continue
             if coach[i] != coach[i - 1]:
@@ -126,10 +130,10 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 continue
             changes = {}
             for col, values in per_match.items():
-                before, after = values[i - window:i], values[i:i + window]
+                pre, post = values[i - window:i], values[i:i + after]
                 # a missing value (no odds / no squad data for a match) leaves the change undefined
-                changes[PER_MATCH_CHANGES[col]] = (np.nan if np.isnan(before).any() or np.isnan(after).any()
-                                                   else after.mean() - before.mean())
+                changes[PER_MATCH_CHANGES[col]] = (np.nan if np.isnan(pre).any() or np.isnan(post).any()
+                                                   else post.mean() - pre.mean())
             rows.append({
                 **changes,
                 "team": team,
@@ -137,19 +141,23 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW) -> pd.DataFrame:
                 "kind": kind,
                 "coach_out": coach[i - 1] if kind == "treated" else None,
                 "coach_in": coach[i] if kind == "treated" else None,
-                "in_season": season[i - window] == season[i + window - 1],
+                "in_season": season[i - window] == season[i + after - 1],
                 # could new signings arrive during the matches after the change?
                 "window_after": transfer_window_open(pd.Timestamp(dates[i]),
-                                                     pd.Timestamp(dates[i + window - 1])),
+                                                     pd.Timestamp(dates[i + after - 1])),
                 "ppg_before": points[i - window:i].mean(),
-                "ppg_after": points[i:i + window].mean(),
+                "ppg_after": points[i:i + after].mean(),
                 # sackings usually follow a collapse in the last couple of results;
                 # a robustness check adjusts for that too (see estimate_effects)
                 "ppg_last2": points[i - 2:i].mean(),
                 # every match's points, for the match-by-match event study
-                **{f"pts_{k:+d}": points[i + k] for k in range(-window, window)},
+                **{f"pts_{k:+d}": points[i + k] for k in range(-window, after)},
+                **{f"xgd_{k:+d}": xgd[i + k] for k in range(-window, after)},
+                # actual goal difference: what Heuer et al. (2011) matched on
+                "gd_before": gd[i - window:i].mean(),
+                "gd_after": gd[i:i + after].mean(),
                 "xgd_before": np.nanmean(xgd[i - window:i]),
-                "xgd_after": np.nanmean(xgd[i:i + window]),
+                "xgd_after": np.nanmean(xgd[i:i + after]),
             })
     return pd.DataFrame(rows)
 
@@ -298,7 +306,88 @@ def estimate_effects(windows: pd.DataFrame) -> dict:
 
 
 
-def event_study(windows: pd.DataFrame, covariates: tuple[str, ...], window: int = WINDOW) -> dict:
+# Matches after the change over which the effect is measured, in the
+# horizon check. The published studies this is compared with use 10
+# (Heuer et al. 2011; Lundkvist et al. 2026 -- see docs/results-in-depth.md).
+HORIZONS = (4, 6, 8, 10, 12)
+
+
+def _has_both_kinds(w: pd.DataFrame) -> bool:
+    return not w.empty and (w["kind"] == "treated").any() and (w["kind"] == "control").any()
+
+
+def horizon_sensitivity(matches: pd.DataFrame, covariates: tuple[str, ...],
+                        horizons: tuple[int, ...] = HORIZONS) -> list[dict]:
+    """The mid-season points effect measured over different numbers of
+    matches after the change, always against the same 8 before. Each horizon
+    rebuilds the windows, so it uses every sacking with that many matches
+    left in the season (fewer for longer horizons)."""
+    rows = []
+    for h in horizons:
+        w = build_windows(matches, after=h)
+        mid = w[w["in_season"]] if not w.empty else w
+        if not _has_both_kinds(mid):
+            continue
+        est = _AdjustedEstimator(mid, "ppg", tuple(c for c in covariates if c in mid))
+        summary = est.estimate()
+        if summary["n_treated"]:
+            ci = est.bootstrap()["effect_ci95"]
+            rows.append({"matches_after": h, "n_treated": summary["n_treated"],
+                         "effect": summary["effect"], "effect_ci95": ci})
+    return rows
+
+
+def published_designs(matches: pd.DataFrame, covariates: tuple[str, ...]) -> list[dict]:
+    """This data run through the designs of the two closest published studies
+    (full references in docs/results-in-depth.md), to see whether a
+    different answer comes from different data or a different method.
+    Both compare the level after the change with teams matched on the before
+    period, so the outcome here is the after-level, adjusted for the matched
+    variables only -- no xG or fixture adjustment. Each design's windows are
+    also estimated with this project's adjustment (`covariates`), which
+    separates the effect of the windows from the effect of the adjustment."""
+    def level(w: pd.DataFrame, col: str) -> pd.DataFrame:
+        return w.assign(level_before=0.0, level_after=w[col])
+
+    def effect(w: pd.DataFrame, col: str, covariates: list[str]) -> dict:
+        est = _AdjustedEstimator(level(w, col), "level", tuple(covariates))
+        summary = est.estimate()
+        if not summary["n_treated"]:
+            return {"n_treated": 0}
+        return {"n_treated": summary["n_treated"], "effect": summary["effect"],
+                "effect_ci95": est.bootstrap()["effect_ci95"]}
+
+    def ours(w: pd.DataFrame) -> dict:
+        est = _AdjustedEstimator(w, "ppg", tuple(c for c in covariates if c in w))
+        summary = est.estimate()
+        return {"n_treated": summary["n_treated"], "effect": summary["effect"],
+                "effect_ci95": est.bootstrap()["effect_ci95"]} if summary["n_treated"] else {"n_treated": 0}
+
+    heuer = build_windows(matches, window=10, after=10)
+    lundkvist = build_windows(matches, window=5, after=10)
+    heuer = heuer[heuer["in_season"]] if not heuer.empty else heuer
+    lundkvist = lundkvist[lundkvist["in_season"]] if not lundkvist.empty else lundkvist
+    if not (_has_both_kinds(heuer) and _has_both_kinds(lundkvist)):
+        return []  # too little data for 10-match windows (e.g. the test fixture)
+    trajectory = [f"pts_{k:+d}" for k in range(-5, 0)]
+    return [
+        {"study": "Heuer et al. 2011", "design": "10 matches before and after, matched on goal difference",
+         "outcome": "points per game", **effect(heuer, "ppg_after", ["gd_before"])},
+        {"study": "Heuer et al. 2011", "design": "same windows, this project's adjustment",
+         "outcome": "points per game", **ours(heuer)},
+        {"study": "Heuer et al. 2011", "design": "10 matches before and after, matched on goal difference",
+         "outcome": "goal difference per game", **effect(heuer, "gd_after", ["gd_before"])},
+        {"study": "Lundkvist et al. 2026", "design": "matched on the last 5 results, 10 matches after",
+         "outcome": "points per game", **effect(lundkvist, "ppg_after", trajectory)},
+        {"study": "Lundkvist et al. 2026", "design": "same windows, this project's adjustment",
+         "outcome": "points per game", **ours(lundkvist)},
+        {"study": "Lundkvist et al. 2026", "design": "matched on the last 5 results, 10 matches after",
+         "outcome": "xG difference per game", **effect(lundkvist, "xgd_after", trajectory)},
+    ]
+
+
+def event_study(windows: pd.DataFrame, covariates: tuple[str, ...], window: int = WINDOW,
+                prefix: str = "pts") -> dict:
     """Points per game at each match from `window` before to `window` after a
     mid-season change: what sacked teams actually took, and what similar
     teams that kept their coach took at the same position -- the same
@@ -314,15 +403,17 @@ def event_study(windows: pd.DataFrame, covariates: tuple[str, ...], window: int 
     X_tr = np.column_stack([np.ones(len(tr)), tr[list(covariates)].to_numpy()])
     rows = []
     for k in range(-window, window):
-        col = f"pts_{k:+d}"
-        beta = np.linalg.lstsq(X_ctrl, ctrl[col].to_numpy(dtype=float), rcond=None)[0]
-        actual = tr[col].to_numpy(dtype=float)
+        col = f"{prefix}_{k:+d}"
+        y_ctrl, actual = ctrl[col].to_numpy(dtype=float), tr[col].to_numpy(dtype=float)
+        ok_c, ok_t = ~np.isnan(y_ctrl), ~np.isnan(actual)  # a few matches lack xG
+        beta = np.linalg.lstsq(X_ctrl[ok_c], y_ctrl[ok_c], rcond=None)[0]
+        actual = actual[ok_t]
+        half = 1.96 * actual.std(ddof=1) / np.sqrt(len(actual))
         rows.append({
             "match": k,
             "actual": float(actual.mean()),
-            "actual_ci95": [float(actual.mean() - 1.96 * actual.std(ddof=1) / np.sqrt(len(actual))),
-                            float(actual.mean() + 1.96 * actual.std(ddof=1) / np.sqrt(len(actual)))],
-            "expected": float((X_tr @ beta).mean()),
+            "actual_ci95": [float(actual.mean() - half), float(actual.mean() + half)],
+            "expected": float((X_tr[ok_t] @ beta).mean()),
         })
     return {"n_changes": len(tr), "covariates": list(covariates), "matches": rows}
 
@@ -454,6 +545,11 @@ def run() -> dict:
         return {}
     results = estimate_effects(windows)
     results["event_study"] = event_study(windows, tuple(results["covariates"]))
+    # the same view for chance quality: was the collapse before a sacking bad
+    # luck, or did the underlying performance drop too?
+    results["event_study_xgd"] = event_study(windows, tuple(results["covariates"]), prefix="xgd")
+    results["horizon_sensitivity"] = horizon_sensitivity(matches, tuple(results["covariates"]))
+    results["published_designs"] = published_designs(matches, tuple(results["covariates"]))
 
     # Per-change expected PPG change, from the control fit for its kind --
     # "which sackings beat what was expected anyway" (the published results

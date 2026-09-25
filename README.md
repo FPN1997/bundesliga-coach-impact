@@ -12,7 +12,7 @@ matchday.
 
 ## Findings
 
-### A new coach is worth about +0.2 points per game — a third of the "bounce"
+### Most of the "new coach bounce" happens anyway. What's left is small: about +0.2 points per game
 
 Teams that sack their coach mid-season take **+0.54 points per game** more over the next
 8 matches than over the previous 8. But teams in the same slump that *kept* their coach
@@ -41,6 +41,18 @@ itself predict a bigger rebound, so the estimate was re-run adjusting for the la
 results as well: +0.18 per game, barely changed.
 
 ![Points per game match by match around a mid-season sacking](docs/coach_change_event_study.png)
+
+**Compared with published research.** Three peer-reviewed studies found no detectable
+effect of a mid-season sacking: Heuer et al. (2011) on the Bundesliga 1963–2009, van Ours &
+van Tuijl (2016) on the Eredivisie, and Lundkvist et al. (2026) on 331 changes across
+Europe. Run through the two designs that can be reproduced from match data, this project's
+data give +0.11 and +0.12 points per game. Those estimates are positive, but their
+intervals include zero, just as in the papers. Everyone agrees that most of the bounce is
+regression to the mean. Whether a small real effect remains is at the edge of what 50–65
+sackings can resolve. This project's design says yes at every horizon from 4 to 12
+matches except 10, the horizon the papers use, where the interval ends at zero. So
+read +0.19 as "small, probably between zero and +0.3", not as proven
+([comparison](docs/results-in-depth.md#how-this-compares-with-published-research)).
 
 ![Sackings vs. teams that kept their coach](docs/coach_change_effect.png)
 
