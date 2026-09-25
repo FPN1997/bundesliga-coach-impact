@@ -69,6 +69,34 @@ mid-January 2026, leaving them on only about half of the test set. The market
 benchmark therefore uses the market-average odds, which are complete in every season,
 and reports Pinnacle as a sensitivity check on the matches that have it.
 
+### Could Wikidata replace Transfermarkt for coach histories? (checked Sep 2026: no)
+
+Adding more leagues needs coaching histories for about 100 more clubs, and Transfermarkt
+blocks heavy scraping. Wikidata records head coaches (property P286) with start and end
+dates, and its public query service is meant for exactly this kind of lookup. So it was
+checked against the Transfermarkt data, matching clubs exactly through Wikidata's
+Transfermarkt ID (P7223):
+
+- **Where Wikidata names a coach, it's right:** 98.8% agreement across 7,416 team-matches
+  since 2014.
+- **But it often names none:** 19% of matches have no coach on record. Whole clubs are
+  missing (Ingolstadt, Hannover, Greuther Fürth, Elversberg), and Hamburg's many changes
+  are mostly absent.
+- **It misses 33 of 115 mid-season changes** (29%), mostly caretakers and Hamburg.
+
+That rules it out as the main source. A missed sacking doesn't just drop out: it turns
+into a "kept their coach" comparison window, which contaminates the baseline the whole
+analysis depends on. Reaching clubs through Wikidata's league-season items was worse still
+(66% of Bundesliga club-weeks without a coach), because those items often point at a
+different item for the club than the one holding the coach data. So the league-season
+route's 22–32% gaps for the other top-5 leagues can't be trusted either.
+
+What Wikidata is good for: a cross-check. Where it does name a coach it agrees 98.8% of the
+time, so a disagreement flags a likely error in the scraped data. For more leagues,
+Transfermarkt remains the source. A club's coaching history is one page, so four more
+leagues are about 100 polite requests, well within one `bundesliga squad`-sized run once
+the block has cleared.
+
 ## Keeping team names in sync across four sources
 
 FBref, Understat, Transfermarkt and football-data.co.uk each spell clubs differently
