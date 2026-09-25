@@ -7,6 +7,7 @@ One entry point for the whole project.
     bundesliga native-categorical           XGBoost native-categorical-split experiment
     bundesliga coach-effect                 does a coaching change help, beyond regression to the mean?
     bundesliga bounce                       coach-bounce predictor (small-sample, see README)
+    bundesliga sack-o-meter                 this week's sack risk, recovery and change effect per club
     bundesliga squad                        squads, injuries, winter signings (Transfermarkt, cached)
     bundesliga benchmark [--refresh-odds]   pre-match forecasts vs. betting-market odds
     bundesliga predict ...                  forecast a match (see `bundesliga predict --help`)
@@ -81,6 +82,7 @@ def cmd_pipeline(args) -> None:
     from src.coach_change_effect import run as estimate_coach_change_effect
     from src.coach_impact import compute_coach_impact
     from src.formation_matrix import build_formation_matrix, coach_preferred_formations
+    from src.sack_o_meter import run as update_sack_o_meter
 
     if args.skip_fetch:
         log.info("Skipping fetch steps (--skip-fetch)")
@@ -103,6 +105,7 @@ def cmd_pipeline(args) -> None:
     log.info("Step 6/6: Analysis")
     compute_coach_impact()
     estimate_coach_change_effect()
+    update_sack_o_meter()  # weekly: runs with every refresh
     build_formation_matrix()
     coach_preferred_formations()
     log.info("Done. Outputs are in %s/", config.OUTPUT_DIR)
@@ -148,6 +151,13 @@ def cmd_bounce(args) -> None:
     train_and_evaluate()
 
 
+def cmd_sack_o_meter(args) -> None:
+    from src.sack_o_meter import run
+    _require(_match_dataset(), Path(config.OUTPUT_DIR) / "coach_change_effect.json",
+             hint="bundesliga pipeline")
+    run()
+
+
 def cmd_squad(args) -> None:
     from src.fetch_squads import fetch_squads
     _require(_match_dataset(), hint="bundesliga pipeline")
@@ -186,6 +196,7 @@ def cmd_reproduce(args) -> None:
         ("XGBoost native-categorical experiment", cmd_native_categorical, ns()),
         ("coaching-change effect", cmd_coach_effect, ns()),
         ("coach-bounce predictor", cmd_bounce, ns()),
+        ("sack-o-meter", cmd_sack_o_meter, ns()),
         ("betting-market benchmark", cmd_benchmark, ns(refresh_odds=args.refresh_odds)),
         ("results page", cmd_site, ns()),
     ]
@@ -219,6 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("coach-effect", help="effect of a coaching change beyond regression to the mean") \
         .set_defaults(func=cmd_coach_effect)
     sub.add_parser("bounce", help="coach-bounce predictor").set_defaults(func=cmd_bounce)
+    sub.add_parser("sack-o-meter", help="this week's sack risk, recovery and change effect per club") \
+        .set_defaults(func=cmd_sack_o_meter)
     sub.add_parser("squad", help="squads, market values, winter signings and injuries "
                                  "(Transfermarkt; slow the first time, then cached)") \
         .set_defaults(func=cmd_squad)

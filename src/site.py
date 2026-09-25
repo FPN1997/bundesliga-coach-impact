@@ -142,6 +142,12 @@ def _next_matchday() -> dict:
     return {"round": int(nxt["md"].iloc[0]), "fixtures": fixtures}
 
 
+def _sack_o_meter() -> dict | None:
+    """This week's meter (src/sack_o_meter.py), if it has been computed."""
+    path = _out("sack_o_meter.json")
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def collect() -> dict:
     m = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
     return {
@@ -153,6 +159,7 @@ def collect() -> dict:
             "repo": REPO_URL,
         },
         "coach_effect": _coach_effect(),
+        "sack_o_meter": _sack_o_meter(),
         "benchmark": _benchmark(),
         "formations": _formations(),
         "next_matchday": _next_matchday(),

@@ -122,6 +122,14 @@ guarding there covers the likely failures, but it isn't a guarantee.
 macOS LaunchAgent. It uses `launchd` rather than `cron` deliberately: `cron` skips a
 job if the Mac is asleep, while `launchd` runs a missed job on the next wake or login.
 
+The pipeline's analysis step also recomputes the sack-o-meter (`src/sack_o_meter.py`), and
+`scripts/publish_site.sh` then puts it on the results page. That makes the meter only as
+current as its inputs. Results and xG come in fresh every week, but the coach list comes from
+Transfermarkt. While Transfermarkt is blocking requests, the refresh keeps the previous coach
+history (see above), so a coach sacked since the last successful fetch would still be shown.
+The page therefore states the date of the coach list ("coaches as of …"), taken from when
+`data/processed/coach_history.csv` was last written.
+
 The first two scheduled runs both failed, and neither said so:
 
 - **Sep 13:** hung for 29 hours inside the FBref/Selenium fetch, with nothing to stop it.

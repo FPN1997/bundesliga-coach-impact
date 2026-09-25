@@ -7,8 +7,9 @@ mean, and match forecasts benchmarked against the betting market. Thirteen seaso
 [![CI](https://github.com/FPN1997/bundesliga-coach-impact/actions/workflows/ci.yml/badge.svg)](https://github.com/FPN1997/bundesliga-coach-impact/actions/workflows/ci.yml)
 
 **→ [Interactive results page](https://fpn1997.github.io/bundesliga-coach-impact/)** —
-every mid-season sacking since 2014, the forecast benchmark, and forecasts for the next
-matchday.
+this week's **sack-o-meter** (every club's sack risk, how much it would recover anyway, and
+what a change might add), every mid-season sacking since 2014, the forecast benchmark, and
+forecasts for the next matchday. Refreshed automatically every week.
 
 ## Findings
 
@@ -90,6 +91,24 @@ all of that comes from how bad the run was beforehand, i.e. regression to the me
 (team form alone: +0.33). The incoming coach's own record adds nothing (on its own: −0.04).
 ([details](docs/results-in-depth.md#coach-bounce-predictor))
 
+### The sack-o-meter: the study, applied to this week
+
+The results page turns the analysis into a weekly table (`src/sack_o_meter.py`). For each club it shows:
+
+- **Sack risk:** the chance of a new coach within the next 4 matches. It comes from a model
+  trained on 5,840 club-weeks since 2014, using form against what the betting market
+  expected, the last two results, xG, the coach's time in the job and how far into the season
+  it is.
+- **Recovery anyway:** the points a club in that position takes if it keeps its coach.
+- **What a change adds:** the study's estimate, shown only for clubs whose form is in the
+  range where sackings actually happen.
+
+Tested season by season, on seasons it never saw, the risk model ranks clubs better than
+points alone (AUC 0.79 against 0.76). Its
+percentages hold up: clubs given 20%–35% had a change
+27% of the time. It predicts what clubs *do*, not what they should do
+([details](docs/results-in-depth.md#sack-o-meter)).
+
 ### Formation matchups
 
 ![Points per game by formation matchup](docs/formation_matchup_heatmap.png)
@@ -154,6 +173,7 @@ Model: logistic_regression (prematch, regularization chosen by time-ordered CV)
 | `bundesliga pipeline [--skip-fetch]` | Scrape (or reuse) the data, merge it, run the coach-impact and formation analyses |
 | `bundesliga coach-effect` | Effect of a coaching change beyond regression to the mean |
 | `bundesliga benchmark [--refresh-odds]` | Score the forecasts against betting odds |
+| `bundesliga sack-o-meter` | This week's sack risk, recovery and change effect per club (also runs in `pipeline`) |
 | `bundesliga train` / `tune --method grid\|embargoed\|optuna` | Train or tune the outcome classifiers |
 | `bundesliga predict ...` | Forecast a match (`--help` for options) |
 | `bundesliga site` | Rebuild the results page in `site/` (published on push) |

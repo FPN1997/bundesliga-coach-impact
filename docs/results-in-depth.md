@@ -348,6 +348,70 @@ each formation its own split, while a native split has to partition more than a 
 formations into two groups at a time. Native categorical support pays off at much higher
 cardinality, where one-hot's column explosion is the real problem.
 
+## Sack-o-meter
+
+`src/sack_o_meter.py`, run with `bundesliga sack-o-meter` and as part of every weekly
+`bundesliga pipeline`. It publishes a table on the results page with three numbers per club.
+
+**Sack risk.** This is the chance of a new coach within the next 4 matches. A logistic
+regression with spline terms is fit on every club-week since 2014 that has at least 4
+matches played that season (5,840 rows). Its features are:
+
+- points per game over the last 8 matches of this season (or all of them, if fewer),
+  minus what the closing betting odds expected over the same matches;
+- that market expectation itself;
+- the last two results;
+- xG difference;
+- days in the job, from the coach history, which is right for promoted clubs too;
+- how far into the season it is.
+
+The target only looks ahead within a season, so a summer appointment is not counted as a
+sacking. Tested leave-one-season-out:
+
+| | AUC | Brier | Log loss |
+|---|---|---|---|
+| Sack-o-meter | 0.795 | 0.0568 | 0.2085 |
+| Points per game only | 0.759 | 0.0582 | 0.2167 |
+| Base rate (6.6%) | 0.500 | 0.0620 | 0.2445 |
+
+| Forecast band | Club-weeks | Average forecast | A change followed |
+|---|---|---|---|
+| 0%–2% | 1,286 | 1.5% | 0.5% |
+| 2%–5% | 2,020 | 3.2% | 3.1% |
+| 5%–10% | 1,292 | 7.1% | 6.0% |
+| 10%–20% | 934 | 14.3% | 16.8% |
+| 20%–35% | 298 | 24.8% | 27.2% |
+
+A plain logistic regression ranked clubs almost as well but was overconfident at the top:
+its forecasts above 35% averaged 42% and were followed by a change 22% of the time. Spline
+terms with shrinkage fixed that and scored best on all three measures. Out of
+sample, only 10 club-weeks now get more than 35% (maximum 38%), and 3 of those 10 were
+followed by a change. The training data count 79
+club-seasons with a change, so the model reflects how Bundesliga clubs usually behave, not
+any one board. It predicts what clubs *do*, not what would help them.
+
+Two details keep the table honest:
+
+- The current coach comes from the coach history, not from the last match played. A club
+  that changed coach after its last match (Gladbach in September 2026) is marked "just
+  changed" instead of getting a risk.
+- A coach who took over within the form window already *is* the change, so for that club
+  the "with a new coach" range is the one that applies.
+
+**Recovery anyway.** This is expected points per game over the next 8 matches if the coach
+stays. It uses the same regression on comparison windows as the coaching-change study
+(teams that kept their coach, adjusted for form, xG difference and the change in fixture
+difficulty), with the upcoming fixtures rated the same way. Early in the season the model
+is refit with a before-window as long as the season allows, 4 to 8 matches
+(`build_windows(window=k, after=8)`). It is an average: a single club's next 8 matches
+spread around it with a standard deviation of about 0.5 points per game.
+
+**What a change adds.** This is the study's mid-season estimate, the same for every club,
+because nothing in the data predicts which changes work better (see the coach-bounce
+predictor below). It is shown only for clubs at or below
+1.6 points per game, where 95% of mid-season sackings happened.
+Given the comparison with published research above, read it as "small, not proven".
+
 ## Coach-bounce predictor
 
 `src/coach_bounce.py`, run with `bundesliga bounce`.

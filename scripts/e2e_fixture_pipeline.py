@@ -204,6 +204,12 @@ def main() -> None:
         effect = estimate_coach_change_effect()
         assert effect["mid_season"]["ppg"]["n_treated"] == 0
 
+        print("== sack_o_meter ==")
+        # The fixture has no odds file, and the meter needs market
+        # expectations: it must skip with a warning, not crash the pipeline.
+        from src.sack_o_meter import run as update_sack_o_meter
+        assert update_sack_o_meter() == {}
+
         print("== formation_matrix ==")
         matrix = build_formation_matrix()
         assert not matrix.empty, "formation matchup matrix should be non-empty"
