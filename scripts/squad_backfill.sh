@@ -1,17 +1,20 @@
 #!/bin/bash
-# Temporary background job: finish the Transfermarkt squad/injury scrape in
-# polite chunks, then remove itself. Run every 4 hours by
+# Temporary background job: finish the Transfermarkt backfill in polite
+# chunks, then remove itself. Run every 4 hours by
 # scripts/com.felixnitschke.bundesliga-coach-impact.squadbackfill.plist.
 #
-# Why chunks: Transfermarkt's firewall blocked the first full run after
-# ~1,100 requests in an hour (see docs/engineering-notes.md). `bundesliga
-# squad` makes at most 400 live requests per run, 4 s apart, and caches every
-# page, so each run continues where the last one stopped. While Transfermarkt
-# is still blocking, a run costs a single request and exits quietly.
+# Each run is `bundesliga backfill`: one budget of at most 400 requests, 4 s
+# apart, spent in priority order -- the Bundesliga coach list if it's over a
+# week old, then coaching histories for the other top-5 leagues, then squads
+# and injuries with whatever is left. Why chunks: Transfermarkt's firewall
+# blocked the first full squad run after ~1,100 requests in an hour (see
+# docs/engineering-notes.md). Every page is cached, so each run continues
+# where the last one stopped; while Transfermarkt is still blocking, a run
+# costs a single request and exits quietly.
 #
-# When the data is complete (fetch_squads writes tm_injuries.parquet only
-# then), it notifies and unloads + deletes its own LaunchAgent -- this is not
-# meant to become a standing job.
+# When everything is in (the backfill writes data/processed/backfill_complete
+# only then), it notifies and unloads + deletes its own LaunchAgent -- this is
+# not meant to become a standing job.
 set -u
 
 PROJECT_DIR=${PROJECT_DIR:-"/Users/felixnitschke/Felix.com/bundesliga-coach-impact"}
@@ -21,7 +24,7 @@ TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-3600}
 NOTIFY=${NOTIFY:-1}
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/squad_backfill_$(date +%Y-%m-%d_%H%M%S).log"
-DONE_FILE="$PROJECT_DIR/data/raw/tm_injuries.parquet"
+DONE_FILE="$PROJECT_DIR/data/processed/backfill_complete"
 
 mkdir -p "$LOG_DIR"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
@@ -38,7 +41,7 @@ remove_self() {
 cd "$PROJECT_DIR" || exit 1
 
 if [ -f "$DONE_FILE" ]; then
-    log "Squad data already complete"
+    log "Backfill already complete"
     remove_self
     exit 0
 fi
@@ -48,8 +51,8 @@ if pgrep -f "scripts/weekly_refresh.sh" >/dev/null; then
 fi
 
 source .venv/bin/activate
-log "=== Squad backfill run ==="
-python cli.py squad >> "$LOG_FILE" 2>&1 &
+log "=== Backfill run (coach histories first, then squads) ==="
+python cli.py backfill >> "$LOG_FILE" 2>&1 &
 pid=$!
 elapsed=0
 while kill -0 "$pid" 2>/dev/null; do
@@ -65,8 +68,8 @@ wait "$pid"
 status=$?
 
 if [ -f "$DONE_FILE" ]; then
-    log "Squad data complete"
-    notify "Bundesliga squad data complete" "Injury and signing data finished downloading. Ask Claude to finish the analysis."
+    log "Backfill complete"
+    notify "Bundesliga backfill complete" "Coach histories for the top-5 leagues and the injury/signing data are in. Ask Claude to finish the analysis."
     remove_self
 elif grep -q "blocked the scrape" "$LOG_FILE"; then
     log "Transfermarkt still blocking -- will try again next slot"
@@ -74,7 +77,7 @@ elif grep -q "request budget" "$LOG_FILE"; then
     log "Budget for this run used -- continuing next slot"
 elif [ "$status" -ne 0 ]; then
     log "Run failed (exit $status)"
-    notify "Bundesliga squad backfill error" "Exit $status. See $(basename "$LOG_FILE")"
+    notify "Bundesliga backfill error" "Exit $status. See $(basename "$LOG_FILE")"
 fi
 
 # keep the last ~30 run logs

@@ -51,14 +51,31 @@ arrivals, injury histories; `src/fetch_squads.py`) takes ~3,000 Transfermarkt pa
 first run, 2 seconds apart, was blocked after ~1,100 requests in about an hour: every page
 returned HTTP 405 with `x-amzn-waf-action: captcha`. The project doesn't try to get around
 a block. Instead every Transfermarkt fetcher recognizes it (a firewall header, 403/405/429,
-or an empty body) and stops at the first one; the squad scrape runs at 4 seconds per
-request and at most 400 live requests per run, caching every page so each run continues
-where the last stopped; and the weekly refresh keeps the previous coach history if
-Transfermarkt is blocking, rather than losing the week's match data.
-To finish the scrape after the block, a temporary LaunchAgent
-(`scripts/squad_backfill.sh`, every 4 hours) runs `bundesliga squad` until the data is
-complete, then notifies and removes itself. While Transfermarkt is still blocking, a run
-costs one request and exits quietly.
+or an empty body) and stops at the first one.
+
+Every Transfermarkt request, from any fetcher, goes through `src/transfermarkt_client.py`:
+
+- requests are 4 seconds apart;
+- a run has one budget of at most 400 live requests, however many fetch steps it runs;
+- every page is cached, so each run continues where the last stopped;
+- the search helper used to read a block as "no result" and move on to the next club; it
+  now stops like everything else.
+
+The weekly refresh keeps the previous coach history if Transfermarkt is blocking, rather
+than losing the week's match data.
+
+To finish the downloads after the block, a temporary LaunchAgent
+(`scripts/squad_backfill.sh`, every 4 hours) runs `bundesliga backfill`. It spends each
+run's budget in priority order:
+
+1. the Bundesliga coach list, if more than a week old (the sack-o-meter names coaches from
+   it);
+2. coaching histories for the other top-5 leagues (`src/fetch_league_coaches.py`), since
+   more leagues narrow the study's interval far more than injuries would;
+3. squads and injuries, with whatever is left.
+
+Once everything is in, it notifies and removes itself. While Transfermarkt is still
+blocking, a run costs one request and exits quietly.
 
 **Odds: the format changed in 2019-20.** Earlier seasons on football-data.co.uk carry the
 market average as Betbrain's `BbAvH/D/A` and have no closing odds; `fetch_odds.py` folds
@@ -94,8 +111,9 @@ route's 22–32% gaps for the other top-5 leagues can't be trusted either.
 What Wikidata is good for: a cross-check. Where it does name a coach it agrees 98.8% of the
 time, so a disagreement flags a likely error in the scraped data. For more leagues,
 Transfermarkt remains the source. A club's coaching history is one page, so four more
-leagues are about 100 polite requests, well within one `bundesliga squad`-sized run once
-the block has cleared.
+leagues take about 100 club pages plus a search for each, well within one backfill run's
+budget once the block has cleared (`src/fetch_league_coaches.py`, first in the backfill's
+priority order).
 
 ## Keeping team names in sync across four sources
 

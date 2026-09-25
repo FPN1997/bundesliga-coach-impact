@@ -15,6 +15,7 @@ import requests
 import cli
 from src import fetch_coach_history as fch
 from src import fetch_squads as fs
+from src import transfermarkt_client as tm
 
 
 def _response(status: int, body: str = "<html>ok</html>", headers: dict | None = None) -> requests.Response:
@@ -70,13 +71,51 @@ def test_weekly_refresh_keeps_previous_coach_history_when_blocked(monkeypatch, t
     assert "keeping the previous coach history" in caplog.text
 
 
-def test_squad_scrape_stops_at_its_request_budget(monkeypatch, tmp_path):
-    monkeypatch.setattr(fs, "REQUEST_DELAY", 0.0)
-    monkeypatch.setattr(fs, "MAX_LIVE_REQUESTS_PER_RUN", 2)
-    monkeypatch.setattr(fs.requests, "get", lambda *a, **k: _response(200))
+@pytest.fixture
+def fast_client(monkeypatch):
+    """The shared client with no delay, a fresh budget, and a fake network."""
+    monkeypatch.setattr(tm, "REQUEST_DELAY", 0.0)
+    tm.reset()
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return _response(200)
+
+    monkeypatch.setattr(tm.requests, "get", fake_get)
+    yield calls
+    tm.reset()
+
+
+def test_squad_scrape_stops_at_its_request_budget(monkeypatch, tmp_path, fast_client):
+    monkeypatch.setattr(tm, "MAX_LIVE_REQUESTS_PER_RUN", 2)
     fetcher = fs._Fetcher(current_season_start=2026)
     fetcher.get("https://example/1", tmp_path / "1.html", 2020)
     fetcher.get("https://example/2", tmp_path / "2.html", 2020)
     fetcher.get("https://example/1", tmp_path / "1.html", 2020)  # cached: doesn't count
     with pytest.raises(fs.RequestBudgetReached):
         fetcher.get("https://example/3", tmp_path / "3.html", 2020)
+
+
+def test_one_budget_covers_every_transfermarkt_fetch_in_a_run(monkeypatch, tmp_path, fast_client):
+    """`bundesliga backfill` runs coach histories, then squads, in one
+    process: requests made by the first must count against the second."""
+    monkeypatch.setattr(tm, "MAX_LIVE_REQUESTS_PER_RUN", 3)
+    tm.get("https://example/coach-history-1")
+    tm.get("https://example/coach-history-2")
+    fetcher = fs._Fetcher(current_season_start=2026)
+    fetcher.get("https://example/squad-1", tmp_path / "s1.html", 2020)
+    with pytest.raises(fs.RequestBudgetReached):
+        fetcher.get("https://example/squad-2", tmp_path / "s2.html", 2020)
+    assert tm.live_requests() == 3
+
+
+def test_a_blocked_search_stops_instead_of_reading_as_no_result(monkeypatch):
+    from src import transfermarkt_search as tms
+    monkeypatch.setattr(tm, "REQUEST_DELAY", 0.0)
+    tm.reset()
+    monkeypatch.setattr(tm.requests, "get", lambda *a, **k: _response(405, "<html>captcha</html>",
+                                                                      {"x-amzn-waf-action": "captcha"}))
+    with pytest.raises(tm.TransfermarktBlocked):
+        tms.search_club_id("Some Club")
+    tm.reset()

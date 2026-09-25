@@ -67,27 +67,32 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
-import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
 import config
+from src import transfermarkt_client as tm
 from src.data_guard import existing_csv_row_count, guard_against_shrinkage
+from src.transfermarkt_client import (  # noqa: F401 (re-exported)
+    HEADERS,
+    TransfermarktBlocked,
+    raise_if_blocked,
+)
 from src.transfermarkt_search import search_club_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-HEADERS = {
-    # Transfermarkt serves a normal page to a standard browser UA; no
-    # special auth or JS rendering needed for this page.
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
-}
 NAME_DOB_RE = re.compile(r"\s+\d{2}/\d{2}/\d{4}$")
+
+
+def fold(text: str) -> str:
+    """Lower-case, accents stripped: 'Atlético' -> 'atletico'."""
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
 
 
 def _parse_date(value: str) -> pd.Timestamp | None:
@@ -107,46 +112,38 @@ def _parse_date(value: str) -> pd.Timestamp | None:
         return None
 
 
-class TransfermarktBlocked(RuntimeError):
-    """Transfermarkt's firewall is blocking or rate-limiting us. Stop and
-    back off -- never retry harder or try to get around it."""
-
-
-def raise_if_blocked(resp: requests.Response, url: str) -> None:
-    """Transfermarkt signals a block in several ways: an AWS WAF action
-    header (seen live: 405 + x-amzn-waf-action: captcha after ~1,100 requests
-    in an hour), a 403/405/429, or a 200/202 with an empty body (the
-    challenge that took transfermarkt.com offline for this project)."""
-    waf = resp.headers.get("x-amzn-waf-action")
-    if waf or resp.status_code in (403, 405, 429) or not resp.text.strip():
-        raise TransfermarktBlocked(
-            f"{url} -> HTTP {resp.status_code}" + (f", firewall action {waf!r}" if waf else "")
-            + f", {len(resp.text)} bytes. Transfermarkt is blocking requests -- wait and retry later.")
-
-
-def _fetch_club_table(club: str, club_id: int, *, strict_title_check: bool = False) -> pd.DataFrame:
+def _fetch_club_table(club: str, club_id: int, *, strict_title_check: bool = False,
+                      cache_path: Path | None = None, use_cache: bool = False) -> pd.DataFrame:
     """strict_title_check: raise on a title mismatch instead of just
     warning. Used for auto-resolved ids (see search_club_id below), which
     haven't had a human look at them the way a config.CLUB_TRANSFERMARKT_ID
     entry has -- a mismatch there means "reject this guess," not "log a
-    note for someone to double check eventually."."""
+    note for someone to double check eventually.".
+
+    use_cache: read `cache_path` instead of fetching if it exists (the
+    other-league backfill, where a finished history needn't be refetched).
+    The weekly Bundesliga refresh always fetches -- it's looking for new
+    coaches."""
     url = f"https://www.transfermarkt.de/verein/mitarbeiterhistorie/verein/{club_id}/plus/1"
-    log.info("Fetching manager history for %s (Transfermarkt id %d)", club, club_id)
-    resp = requests.get(url, headers=HEADERS, timeout=20)
-    raise_if_blocked(resp, url)  # a block isn't "no data" -- see the module docstring
-    resp.raise_for_status()
+    cache_path = cache_path or Path(config.RAW_DIR) / f"transfermarkt_{club.replace(' ', '_')}.html"
+    if use_cache and cache_path.exists():
+        text = cache_path.read_text(encoding="utf-8")
+    else:
+        log.info("Fetching manager history for %s (Transfermarkt id %d)", club, club_id)
+        resp = tm.get(url, timeout=20)  # paced, budgeted, raises on a block
+        resp.raise_for_status()
+        text = resp.text
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(text, encoding="utf-8")
 
-    cache_path = Path(config.RAW_DIR) / f"transfermarkt_{club.replace(' ', '_')}.html"
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(resp.text, encoding="utf-8")
-
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(text, "html.parser")
 
     title = soup.title.get_text(strip=True) if soup.title else ""
     # Loose sanity check the ID resolved to the club we asked for -- compare
-    # the first "significant" token of the club name against the title.
-    key_token = club.split()[0].lower()
-    if key_token not in title.lower():
+    # the first "significant" token of the club name against the title,
+    # ignoring accents ("Atletico" vs "Atlético").
+    key_token = fold(club.split()[0])
+    if key_token not in fold(title):
         if strict_title_check:
             raise ValueError(f"Transfermarkt id {club_id}'s page title ({title!r}) doesn't "
                               f"match {club!r} -- rejecting auto-resolved id.")
@@ -238,8 +235,8 @@ def fetch_coach_history() -> pd.DataFrame:
 
         try:
             table = _fetch_club_table(club, club_id, strict_title_check=auto_resolving)
-        except TransfermarktBlocked:
-            raise  # stop at the first block -- trying the other clubs would only hammer it
+        except (TransfermarktBlocked, tm.RequestBudgetReached):
+            raise  # stop at the first block (trying other clubs would only hammer it) or at the budget
         except Exception as exc:  # best-effort scraper, log and move on
             log.error("Failed to %s manager history for %s (id %s): %s",
                       "verify auto-resolved" if auto_resolving else "parse", club, club_id, exc)

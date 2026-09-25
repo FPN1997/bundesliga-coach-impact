@@ -34,19 +34,19 @@ season's pages are re-fetched once they're older than CURRENT_SEASON_MAX_AGE.
 from __future__ import annotations
 
 import logging
-import random
 import re
 import time
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import requests
 from bs4 import BeautifulSoup
 
 import config
+from src import transfermarkt_client as tm
 from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
-from src.fetch_coach_history import HEADERS, TransfermarktBlocked, _load_auto_resolved_ids, raise_if_blocked
+from src.fetch_coach_history import _load_auto_resolved_ids
+from src.transfermarkt_client import RequestBudgetReached, TransfermarktBlocked
 
 log = logging.getLogger(__name__)
 
@@ -54,14 +54,10 @@ INJURY_TOP_N = 22
 # Pace and per-run budget. The first full run (2 s apart, no budget) was
 # blocked by Transfermarkt's firewall after ~1,100 requests in about an hour;
 # slower requests and a budget per run spread the rest over several runs.
-REQUEST_DELAY = 4.0            # seconds between live requests (plus up to 1 s jitter)
-MAX_LIVE_REQUESTS_PER_RUN = 400
+# pacing and the per-run request budget live in src/transfermarkt_client.py,
+# shared with every other Transfermarkt fetch in the same run
 CURRENT_SEASON_MAX_AGE = 6     # days before the current season's pages are re-fetched
 BASE = "https://www.transfermarkt.de"
-
-
-class RequestBudgetReached(RuntimeError):
-    """This run's MAX_LIVE_REQUESTS_PER_RUN is used up -- a planned stop, not an error."""
 
 
 def cache_dir() -> Path:
@@ -81,8 +77,7 @@ def injuries_path() -> Path:
 class _Fetcher:
     def __init__(self, current_season_start: int):
         self.current_season_start = current_season_start
-        self.live_requests = 0
-        self._last = 0.0
+        self.live_requests = 0  # this fetcher's share of the run's budget, for the log
 
     def get(self, url: str, cache: Path, season_start: int | None) -> str:
         """Cached GET. Pages for past seasons never expire; the current
@@ -92,20 +87,11 @@ class _Fetcher:
                 time.time() - cache.stat().st_mtime < CURRENT_SEASON_MAX_AGE * 86400)
             if fresh:
                 return cache.read_text(encoding="utf-8")
-        if self.live_requests >= MAX_LIVE_REQUESTS_PER_RUN:
-            raise RequestBudgetReached(f"{self.live_requests} live requests this run")
-        wait = REQUEST_DELAY + random.random() - (time.time() - self._last)
-        if wait > 0:
-            time.sleep(wait)
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        self._last = time.time()
+        resp = tm.get(url)  # paced, budgeted; raises on a block or when the run's budget is used
         self.live_requests += 1
-        raise_if_blocked(resp, url)
         resp.raise_for_status()
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(resp.text, encoding="utf-8")
-        if self.live_requests % 50 == 0:
-            log.info("... %d live Transfermarkt requests so far", self.live_requests)
         return resp.text
 
 

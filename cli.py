@@ -9,6 +9,7 @@ One entry point for the whole project.
     bundesliga bounce                       coach-bounce predictor (small-sample, see README)
     bundesliga sack-o-meter                 this week's sack risk, recovery and change effect per club
     bundesliga squad                        squads, injuries, winter signings (Transfermarkt, cached)
+    bundesliga backfill                     one polite Transfermarkt run, coach histories first (see below)
     bundesliga benchmark [--refresh-odds]   pre-match forecasts vs. betting-market odds
     bundesliga predict ...                  forecast a match (see `bundesliga predict --help`)
     bundesliga site                         rebuild the published results page (site/)
@@ -164,6 +165,67 @@ def cmd_squad(args) -> None:
     fetch_squads()
 
 
+COACH_LIST_MAX_AGE_DAYS = 7
+BACKFILL_DONE = Path(config.PROCESSED_DIR) / "backfill_complete"
+
+
+def cmd_backfill(args) -> None:
+    """One run's Transfermarkt budget (src/transfermarkt_client.py), spent in
+    priority order, stopping everything at the first block:
+
+    1. the Bundesliga coach list, if more than a week old -- the sack-o-meter
+       names coaches from it, and the weekly refresh keeps a stale one while
+       Transfermarkt blocks;
+    2. coaching histories for the other top-5 leagues -- more leagues narrow
+       the study's interval far more than injury data would;
+    3. squads and injuries, with whatever budget is left.
+
+    Writes data/processed/backfill_complete once 2 and 3 are both done."""
+    import time
+
+    from src import transfermarkt_client as tm
+    from src.fetch_coach_history import fetch_coach_history
+    from src.fetch_league_coaches import fetch_league_coaches
+    from src.fetch_squads import fetch_squads, injuries_path
+    _require(_match_dataset(), hint="bundesliga pipeline")
+
+    coach_list = Path(config.COACH_HISTORY_RESOLVED_CSV)
+    age = (time.time() - coach_list.stat().st_mtime) / 86400 if coach_list.exists() else float("inf")
+    if age > COACH_LIST_MAX_AGE_DAYS:
+        log.info("Backfill 1/3: the Bundesliga coach list is %.0f days old -- refreshing it", age)
+        try:
+            fetch_coach_history()
+        except tm.TransfermarktBlocked as exc:
+            log.error("Transfermarkt blocked the scrape: %s", exc)
+            return
+        except tm.RequestBudgetReached as exc:
+            log.warning("Stopped at this run's request budget (%s)", exc)
+            return
+    else:
+        log.info("Backfill 1/3: the Bundesliga coach list is current (%.1f days old)", age)
+
+    log.info("Backfill 2/3: coaching histories for the other top-5 leagues")
+    try:
+        leagues = fetch_league_coaches()
+    except Exception as exc:  # e.g. Understat unreachable: don't let it hold up the rest
+        log.error("Other-league coach histories failed (%s) -- moving on to squads this run", exc)
+        leagues = {"complete": False, "stopped": None}
+    if leagues["stopped"]:
+        return  # blocked or out of budget: squads wait for the next run
+
+    log.info("Backfill 3/3: squads and injuries, %d requests left this run", tm.remaining())
+    if tm.remaining() == 0:
+        log.warning("Stopped at this run's request budget -- squads continue next run")
+        return
+    fetch_squads()
+
+    if leagues["complete"] and injuries_path().exists():
+        BACKFILL_DONE.parent.mkdir(parents=True, exist_ok=True)
+        BACKFILL_DONE.write_text(f"{time.strftime('%Y-%m-%d %H:%M')}\n")
+        log.info("Backfill complete: every coach history and all squad data are in.")
+    log.info("Transfermarkt requests this run: %d", tm.live_requests())
+
+
 def cmd_benchmark(args) -> None:
     from src.market_benchmark import run
     _require(_match_dataset(), hint="bundesliga pipeline")
@@ -235,6 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("squad", help="squads, market values, winter signings and injuries "
                                  "(Transfermarkt; slow the first time, then cached)") \
         .set_defaults(func=cmd_squad)
+
+    sub.add_parser("backfill", help="one polite Transfermarkt run: coach histories first, then squads") \
+        .set_defaults(func=cmd_backfill)
 
     p = sub.add_parser("benchmark", help="score pre-match forecasts against betting odds")
     p.add_argument("--refresh-odds", action="store_true", help="re-download odds first")

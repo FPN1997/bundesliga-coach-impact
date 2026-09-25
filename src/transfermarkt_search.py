@@ -28,12 +28,10 @@ import re
 
 import requests
 
+from src import transfermarkt_client as tm
+
 log = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
-}
 CLUB_LINK_RE = re.compile(r"/([a-z0-9-]+)/startseite/verein/(\d+)")
 RESERVE_YOUTH_RE = re.compile(r"-(ii+|u1[5-9]|u2[0-3]|jugend|frauen)(-|$)")
 
@@ -44,7 +42,10 @@ def search_club_id(club_name: str, *, timeout: int = 20) -> int | None:
     module docstring."""
     url = f"https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query={club_name}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        # Through the shared client: paced, budgeted, and a block raises
+        # TransfermarktBlocked (it used to read as "no result" and move on to
+        # the next club -- exactly the hammering the block handling prevents).
+        resp = tm.get(url, timeout=timeout, allow_redirects=True)
         resp.raise_for_status()
     except requests.RequestException as exc:
         log.warning("Transfermarkt search failed for %r: %s", club_name, exc)
