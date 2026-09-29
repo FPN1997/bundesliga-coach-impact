@@ -47,9 +47,11 @@ def load_odds() -> pd.DataFrame | None:
 
 def fetch_odds() -> pd.DataFrame:
     """One row per match with pre-match/closing odds, team names FBref-normalized."""
-    import soccerdata as sd
+    from src.polite_sources import read_match_history
 
-    raw = sd.MatchHistory(leagues=config.LEAGUE, seasons=config.SEASONS).read_games().reset_index()
+    # one season per call: a multi-season read can silently drop a season (see read_match_history)
+    raw = pd.concat([read_match_history(config.LEAGUE, season) for season in config.SEASONS],
+                    ignore_index=True)
     for new, old in [("AvgH", "BbAvH"), ("AvgD", "BbAvD"), ("AvgA", "BbAvA")]:
         if old in raw.columns:
             raw[new] = raw[new].fillna(raw[old]) if new in raw.columns else raw[old]

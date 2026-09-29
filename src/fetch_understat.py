@@ -1,6 +1,8 @@
 """
-Pull match-level xG and PPDA (pressing intensity) for the Bundesliga from
-Understat via soccerdata.
+Pull match-level results, xG and PPDA (pressing intensity) for the Bundesliga
+from Understat via soccerdata -- the base of the match dataset since FBref
+started challenging plain browsers (see src/build_dataset.py). Fetched through
+src/polite_sources.py: a plain, identifiable request that stops on a refusal.
 
 Verified against live data: `read_team_match_stats()` returns one row PER
 MATCH (home_team/away_team, home_ppda/away_ppda, etc.), not one row per
@@ -32,10 +34,10 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-import soccerdata as sd
 
 import config
 from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
+from src.polite_sources import PoliteUnderstat
 from src.team_name_matcher import best_match
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -95,7 +97,7 @@ def _melt_to_team_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def fetch_understat_matches() -> pd.DataFrame:
     """Return one row per team-match with xG and PPDA, team names FBref-normalized."""
-    understat = sd.Understat(leagues=config.LEAGUE, seasons=config.SEASONS)
+    understat = PoliteUnderstat(leagues=config.LEAGUE, seasons=config.SEASONS)
 
     log.info("Fetching Understat match stats (xG, PPDA) for %s, seasons %s",
               config.LEAGUE, config.SEASONS)

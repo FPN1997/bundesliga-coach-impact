@@ -847,7 +847,7 @@ new MutationObserver(renderThemed).observe(document.documentElement, { attribute
 (function footer() {
   const f = $("footer");
   const p1 = html("p");
-  p1.append("Data: FBref (results, formations), Understat (xG, pressing), Transfermarkt (coach tenures), football-data.co.uk (odds). ",
+  p1.append("Data: Understat (results, xG, pressing), FBref (formations), Transfermarkt (coach tenures), football-data.co.uk (odds). ",
     "Method, tests and every number on this page are reproducible from the ");
   const a = html("a", "GitHub repository"); a.href = M.repo; p1.append(a, ".");
   const p2 = html("p", `Page built ${M.generated}. The mid-season effect uses ${CE.window}-match windows, a linear adjustment for points and xG before the change, and a bootstrap that resamples whole teams.`);

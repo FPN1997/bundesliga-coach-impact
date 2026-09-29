@@ -1,8 +1,22 @@
 """
-Merge FBref (results + formations), Understat (xG + PPDA + deep
-completions), and the coach tenure table into one match-level dataset: one
-row per team per league match, with the coach in charge of that team on
-that date attached.
+Merge Understat (results, xG, PPDA, deep completions), FBref (formations,
+possession, referee...) and the coach tenure table into one match-level
+dataset: one row per team per league match, with the coach in charge of
+that team on that date attached.
+
+Understat is the base: every played match, with both sides' goals. FBref
+only adds its extras, joined on (season, team, opponent, venue) -- unique
+within a league season, and unlike the date it doesn't depend on the two
+sources agreeing when a rescheduled match was played. Until 29 Sep 2026
+FBref was the base; it now challenges plain browsers, and the fetch stops at
+the first challenge (src/fetch_fbref.py), so new matches must not depend on
+it. A match FBref doesn't have yet simply has no formation.
+
+The score is FBref's wherever FBref has the match: it records the official
+result, Understat the one on the pitch, and they differ when a result is
+awarded (Union Berlin 1-1 Bochum on 14 Dec 2024 became a 2-0 Bochum win after
+a lighter hit Bochum's goalkeeper). Every such disagreement is logged, so a
+newly awarded result that FBref hasn't caught up with gets noticed.
 
 Run fetch_fbref.py, fetch_understat.py, and fetch_coach_history.py first
 (or just run `bundesliga pipeline`, which does it in order).
@@ -82,21 +96,35 @@ def _assign_coach(matches: pd.DataFrame, coaches: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(assigned_frames, ignore_index=True)
 
 
+# FBref columns kept as extras, in the dataset's (historical) column order
+FBREF_EXTRAS = ["game", "time", "round", "day", "possession", "Attendance", "captain", "formation",
+                "opp_formation", "referee", "match_report", "Notes", "fbref_game_id"]
+COLUMNS = ["league", "season", "team", "game", "date", "time", "round", "day", "venue", "result", "gf",
+           "ga", "opponent", "possession", "Attendance", "captain", "formation", "opp_formation",
+           "referee", "match_report", "Notes", "fbref_game_id", "match_date", "xg", "xga", "ppda",
+           "deep_completions", "points_understat", "coach", "points"]
+KEYS = ["season", "team", "opponent", "venue"]  # unique within a league season ...
+MEETING = "meeting"  # ... but numbered in date order anyway, should two clubs ever meet twice at one venue
+
+
+def understat_results(understat: pd.DataFrame) -> pd.DataFrame:
+    """Understat's one-row-per-team-match table with both sides' goals."""
+    u = understat.copy()
+    u["season"] = u["season"].astype(str)
+    u["match_date"] = pd.to_datetime(u["date"]).dt.normalize()
+    against = u[["game_id", "team", "goals"]].rename(columns={"team": "opponent", "goals": "ga"})
+    u = u.merge(against, on=["game_id", "opponent"], how="left").rename(
+        columns={"goals": "gf", "points": "points_understat"})
+    return u.dropna(subset=["gf", "ga"])
+
+
 def build_dataset() -> pd.DataFrame:
     fbref, understat, coaches = _load_raw()
+    results = understat_results(understat)
 
     fbref = fbref.rename(columns=FBREF_RENAME)
+    fbref["season"] = fbref["season"].astype(str)
     fbref["date"] = pd.to_datetime(fbref["date"]).dt.normalize()
-    # 'season' comes back as a plain int (e.g. 2324); keep the string form
-    # soccerdata configured us with so it's comparable to config.SEASONS.
-    fbref["match_date"] = fbref["date"]
-
-    understat = understat.copy()
-    understat["match_date"] = pd.to_datetime(understat["date"]).dt.normalize()
-
-    understat_slim = understat[
-        ["match_date", "team", "xg", "xga", "ppda", "deep_completions", "points"]
-    ].rename(columns={"points": "points_understat"})
 
     # FBref's per-team schedule lists the full season's fixtures, played or
     # not -- including config.SEASONS' current/ongoing season pulls in every
@@ -111,23 +139,43 @@ def build_dataset() -> pd.DataFrame:
         log.info("Dropping %d unplayed/future fixture rows (no score yet)", unplayed.sum())
         fbref = fbref[~unplayed]
 
-    merged = fbref.merge(understat_slim, on=["match_date", "team"], how="left")
+    # reindex: an extra FBref doesn't provide is just empty -- they're extras now
+    extras = (fbref.reindex(columns=KEYS + FBREF_EXTRAS + ["date", "gf", "ga"])
+              .rename(columns={"date": "fbref_date", "gf": "fbref_gf", "ga": "fbref_ga"})
+              .sort_values("fbref_date"))
+    extras[MEETING] = extras.groupby(KEYS).cumcount()
+    results = results.sort_values("match_date")
+    results[MEETING] = results.groupby(KEYS).cumcount()
+    merged = results.merge(extras, on=[*KEYS, MEETING], how="left").drop(columns=MEETING)
+    # FBref's date where it has the match (keeps the history exactly as it was
+    # built before), Understat's otherwise
+    merged["date"] = merged["fbref_date"].fillna(merged["match_date"])
+    merged["match_date"] = merged["date"]
+    merged["league"] = config.LEAGUE
 
-    unmatched = merged["xg"].isna().sum()
-    if unmatched:
-        log.warning("%d/%d rows (%.1f%%) got no Understat match on (date, team) -- "
-                    "likely a team-name mapping gap (check config.TEAM_NAME_MAP) or "
-                    "a postponed/rescheduled fixture where the two sources disagree "
-                    "on the match date.", unmatched, len(merged), 100 * unmatched / len(merged))
+    has_fbref = merged["fbref_gf"].notna() & merged["fbref_ga"].notna()
+    differs = has_fbref & ((merged["fbref_gf"] != merged["gf"]) | (merged["fbref_ga"] != merged["ga"]))
+    for r in merged[differs & (merged["venue"] == "Home")].itertuples():
+        log.info("Score differs: %s v %s on %s -- FBref %d-%d (official, used), Understat %d-%d",
+                 r.team, r.opponent, r.date.date(), r.fbref_gf, r.fbref_ga, r.gf, r.ga)
+    merged["gf"] = merged["fbref_gf"].where(has_fbref, merged["gf"])
+    merged["ga"] = merged["fbref_ga"].where(has_fbref, merged["ga"])
+
+    no_fbref = merged["fbref_date"].isna()
+    if no_fbref.any():
+        log.info("%d of %d team-matches have no FBref row yet (no formation): FBref refusing or "
+                 "not yet fetched -- latest %s", no_fbref.sum(), len(merged),
+                 merged.loc[no_fbref, "date"].max().date())
+    unknown = sorted(set(results["team"]) - set(fbref["team"]))
+    if unknown:
+        log.warning("Understat clubs with no FBref name match (check config.TEAM_NAME_MAP): %s", unknown)
 
     merged = _assign_coach(merged, coaches)
-
-    # Points for this team in this match, derived from FBref's result column.
-    if "result" in merged.columns:
-        merged["points"] = merged["result"].map({"W": 3, "D": 1, "L": 0})
-    else:
-        merged["points"] = (merged["gf"] > merged["ga"]).astype(int) * 3 + \
-                            (merged["gf"] == merged["ga"]).astype(int)
+    merged["result"] = pd.Series(pd.NA, index=merged.index, dtype="string").mask(
+        merged["gf"] > merged["ga"], "W").mask(merged["gf"] == merged["ga"], "D").mask(
+        merged["gf"] < merged["ga"], "L")
+    merged["points"] = merged["result"].map({"W": 3, "D": 1, "L": 0})
+    merged = merged[COLUMNS]
 
     out_path = Path(config.PROCESSED_DIR) / "match_dataset.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)

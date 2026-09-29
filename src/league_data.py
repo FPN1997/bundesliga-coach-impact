@@ -38,6 +38,7 @@ from src.build_dataset import _assign_coach
 from src.data_guard import existing_parquet_row_count, guard_against_shrinkage
 from src.fetch_odds import ODDS_COLUMNS, load_odds
 from src.fixture_difficulty import fixture_ease
+from src.polite_sources import PoliteUnderstat, read_match_history
 
 log = logging.getLogger(__name__)
 
@@ -68,9 +69,7 @@ MIN_VOTE_LEAD = 2.0     # ... and at least this many times the runner-up's (seve
 
 def fetch_understat_other_leagues() -> pd.DataFrame:
     """Match-level results and xG for config.OTHER_LEAGUES (soccerdata caches past seasons)."""
-    import soccerdata as sd
-
-    df = sd.Understat(leagues=config.OTHER_LEAGUES, seasons=config.SEASONS).read_team_match_stats()
+    df = PoliteUnderstat(leagues=config.OTHER_LEAGUES, seasons=config.SEASONS).read_team_match_stats()
     df = df.reset_index()
     df["season"] = df["season"].astype(str)
     guard_against_shrinkage(understat_path(), existing_parquet_row_count(understat_path()), len(df))
@@ -100,40 +99,9 @@ def match_names_by_fixtures(fd: pd.DataFrame, us: pd.DataFrame) -> tuple[dict[st
     return mapping, unmatched
 
 
-def _strip_bom_from_match_history_cache() -> int:
-    """football-data.co.uk's 2021-22 Premier League file starts with a UTF-8
-    byte-order mark. soccerdata then can't find its first column ("Div"),
-    fails on that season read alone, and silently drops it when reading many
-    seasons at once. Strip the mark from the cached copies; returns how many."""
-    from soccerdata._config import DATA_DIR
-
-    fixed = 0
-    for path in (Path(DATA_DIR) / "MatchHistory").glob("*.csv"):
-        data = path.read_bytes()
-        if data.startswith(b"\xef\xbb\xbf"):
-            path.write_bytes(data[3:])
-            fixed += 1
-    return fixed
-
-
-def _read_match_history(league: str, season: str) -> pd.DataFrame:
-    """One league-season (cached by soccerdata). Read one at a time, so a bad
-    file fails loudly instead of vanishing from a multi-season read."""
-    import soccerdata as sd
-
-    try:
-        return sd.MatchHistory(leagues=league, seasons=[season]).read_games().reset_index()
-    except KeyError:
-        if not _strip_bom_from_match_history_cache():
-            raise
-        log.info("Stripped a byte-order mark from a cached football-data file; reading %s %s again",
-                 league, season)
-        return sd.MatchHistory(leagues=league, seasons=[season]).read_games().reset_index()
-
-
 def fetch_odds_other_leagues() -> pd.DataFrame:
     """Odds for config.OTHER_LEAGUES, club names converted to Understat's."""
-    raw = pd.concat([_read_match_history(league, season)
+    raw = pd.concat([read_match_history(league, season)
                      for league in config.OTHER_LEAGUES for season in config.SEASONS], ignore_index=True)
     for new, old in [("AvgH", "BbAvH"), ("AvgD", "BbAvD"), ("AvgA", "BbAvA")]:
         if old in raw.columns:

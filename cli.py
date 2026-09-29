@@ -76,20 +76,27 @@ def refresh_coach_history(fetch) -> None:
                     exc)
 
 
-def refresh_fbref(fetch) -> None:
-    """Run the FBref fetch, but if FBref's bot protection challenges us, stop
-    there and keep the previous FBref data -- the rest of the refresh still
-    runs. The fetcher never solves or retries around a challenge (see
-    src/fetch_fbref.py). Without previous data there's nothing to fall back on."""
+def keep_previous_if_refused(fetch, saved: str, source: str) -> None:
+    """Run a fetch, but if the source refuses us (FBref's bot protection
+    challenges, or Understat/football-data answer 403/429), stop there and
+    keep the previously saved file -- the rest of the refresh still runs. No
+    fetcher ever solves, retries around or disguises its way past a refusal
+    (src/fetch_fbref.py, src/polite_sources.py). Without a previous file
+    there's nothing to fall back on."""
     from src.fetch_fbref import FBrefBlocked
+    from src.polite_sources import SourceRefused
     try:
         fetch()
-    except FBrefBlocked as exc:
-        if not (Path(config.RAW_DIR) / "fbref_schedule.parquet").exists():
-            raise
-        log.warning("FBref is challenging requests (%s) -- keeping the previous FBref data. "
-                    "Results and formations since its last successful fetch are missing until "
-                    "it stops.", exc)
+    except (FBrefBlocked, SourceRefused) as exc:
+        if not (Path(config.RAW_DIR) / saved).exists():
+            raise RuntimeError(f"{source} refused the request and there's no previous data: {exc}") from None
+        log.warning("%s refused the request (%s) -- keeping the previous %s.", source, exc, saved)
+
+
+def refresh_fbref(fetch) -> None:
+    """FBref now only adds formations, possession and referees; results come
+    from Understat (src/build_dataset.py). See keep_previous_if_refused."""
+    keep_previous_if_refused(fetch, "fbref_schedule.parquet", "FBref")
 
 
 def refresh_other_leagues() -> None:
@@ -97,9 +104,10 @@ def refresh_other_leagues() -> None:
     there (Understat or football-data.co.uk down) keeps last week's files
     rather than failing the Bundesliga refresh."""
     from src.league_data import fetch_other_leagues
+    from src.polite_sources import SourceRefused
     try:
         fetch_other_leagues()
-    except Exception as exc:
+    except (Exception, SourceRefused) as exc:
         log.warning("Other-league refresh failed (%s) -- keeping the previous files", exc)
 
 
@@ -120,14 +128,14 @@ def cmd_pipeline(args) -> None:
         from src.fetch_fbref import fetch_fbref_matches
         from src.fetch_odds import fetch_odds
         from src.fetch_understat import fetch_understat_matches
-        log.info("Step 1/7: FBref (results + formations)")
+        log.info("Step 1/7: FBref (formations, possession, referees)")
         refresh_fbref(fetch_fbref_matches)
-        log.info("Step 2/7: Understat (xG, PPDA, deep completions)")
-        fetch_understat_matches()
+        log.info("Step 2/7: Understat (results, xG, PPDA, deep completions)")
+        keep_previous_if_refused(fetch_understat_matches, "understat_matches.parquet", "Understat")
         log.info("Step 3/7: Coach tenure history (Transfermarkt)")
         refresh_coach_history(fetch_coach_history)
         log.info("Step 4/7: Betting odds (football-data.co.uk, for fixture difficulty)")
-        fetch_odds()
+        keep_previous_if_refused(fetch_odds, "football_data_odds.parquet", "football-data.co.uk")
         log.info("Step 5/7: Other leagues: results, xG and odds (Understat, football-data.co.uk)")
         refresh_other_leagues()
 

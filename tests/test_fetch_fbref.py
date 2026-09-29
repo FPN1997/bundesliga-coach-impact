@@ -90,8 +90,8 @@ def test_weekly_refresh_keeps_previous_fbref_data_when_challenged(monkeypatch, t
     def blocked():
         raise ff.FBrefBlocked("challenge")
 
-    with pytest.raises(ff.FBrefBlocked):
+    with pytest.raises(RuntimeError, match="no previous data"):
         cli.refresh_fbref(blocked)  # nothing to fall back on -> still an error
     pd.DataFrame({"team": ["A"]}).to_parquet(tmp_path / "fbref_schedule.parquet")
     cli.refresh_fbref(blocked)
-    assert "keeping the previous FBref data" in caplog.text
+    assert "keeping the previous fbref_schedule.parquet" in caplog.text

@@ -120,7 +120,8 @@ def _build_fbref_fixture() -> pd.DataFrame:
 def _build_understat_fixture() -> pd.DataFrame:
     """Columns match the real data/raw/understat_matches.parquet schema
     (verified live) -- xg/xga/ppda/deep_completions loosely track the goals
-    so the numbers are plausible, not that the pipeline cares."""
+    so the numbers are plausible, not that the pipeline cares. Understat is
+    the dataset's base (results), so it needs game ids and goals too."""
     rows = []
     for season in FIXTURE_SEASONS:
         code = _season_code(season)
@@ -129,15 +130,16 @@ def _build_understat_fixture() -> pd.DataFrame:
         for i, (home_gf, away_gf) in enumerate(scores):
             date = base_date + pd.Timedelta(weeks=i)
             home, away = (TEAMS[0], TEAMS[1]) if i % 2 == 0 else (TEAMS[1], TEAMS[0])
+            game_id = f"{code}-{i}"
             rows.append({
-                "season": code, "team": home, "date": date, "opponent": away,
-                "points": _points(home_gf, away_gf),
+                "season": code, "game_id": game_id, "team": home, "date": date, "opponent": away,
+                "venue": "Home", "goals": home_gf, "points": _points(home_gf, away_gf),
                 "xg": home_gf + 0.3, "xga": away_gf + 0.2,
                 "ppda": 8.0 + i % 4, "deep_completions": 10 + i % 5,
             })
             rows.append({
-                "season": code, "team": away, "date": date, "opponent": home,
-                "points": _points(away_gf, home_gf),
+                "season": code, "game_id": game_id, "team": away, "date": date, "opponent": home,
+                "venue": "Away", "goals": away_gf, "points": _points(away_gf, home_gf),
                 "xg": away_gf + 0.2, "xga": home_gf + 0.3,
                 "ppda": 9.0 + i % 4, "deep_completions": 8 + i % 5,
             })

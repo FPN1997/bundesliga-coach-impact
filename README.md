@@ -135,8 +135,8 @@ works" with "strong teams use this formation"; the outcome model's
 
 ```mermaid
 flowchart LR
-    FB[FBref<br/>results, formations] --> DS[Match dataset<br/>coach attached to every match]
-    US[Understat<br/>xG, pressing] --> DS
+    US[Understat<br/>results, xG, pressing] --> DS[Match dataset<br/>coach attached to every match]
+    FB[FBref<br/>formations] --> DS
     TM[Transfermarkt<br/>coach tenures] --> DS
     DS --> CE[Coaching-change effect]
     DS --> FM[Formation matchups]

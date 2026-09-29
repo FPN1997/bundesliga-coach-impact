@@ -17,10 +17,36 @@ headline findings, the [README](../README.md).
 
 | Data | Source | How |
 |---|---|---|
-| Results, formations | [FBref](https://fbref.com) | `soccerdata.FBref` (headless Chrome via seleniumbase) |
-| xG, PPDA (pressing), deep completions | [Understat](https://understat.com) | `soccerdata.Understat` |
+| Results, xG, PPDA (pressing), deep completions | [Understat](https://understat.com) | `soccerdata.Understat` via `src/polite_sources.py` |
+| Formations, possession, referees (and official scores) | [FBref](https://fbref.com) | `src/fetch_fbref.py`: plain headless Chrome, stops at the first challenge |
 | Coach tenure dates | Transfermarkt "Trainerhistorie" pages | `src/fetch_coach_history.py` (custom scraper) + manual CSV fallback |
-| Betting odds (market benchmark, fixture difficulty) | [football-data.co.uk](https://www.football-data.co.uk) | `soccerdata.MatchHistory` via `src/fetch_odds.py` |
+| Betting odds (market benchmark, fixture difficulty) | [football-data.co.uk](https://www.football-data.co.uk) | `soccerdata.MatchHistory` via `src/polite_sources.py` |
+
+**Every source is fetched as an identifiable script, and every fetch stops when the source
+says no.**
+
+- **Transfermarkt** goes through `src/transfermarkt_client.py`.
+- **FBref** goes through `PoliteFBref`, see below.
+- **Understat and football-data.co.uk** go through `src/polite_sources.py`. soccerdata's
+  request readers use `tls_requests`, a client that imitates a real browser's TLS
+  fingerprint; neither site needs it. So these readers use a plain `requests` session
+  with a User-Agent naming the project, and a 403/429 stops the fetch instead of being
+  retried. Checked 29 Sep 2026: all 7,416 Bundesliga and 18,131 other-league matches and
+  every odds file came through that way.
+
+**Results come from Understat since 29 Sep 2026.** FBref used to be the base of the
+dataset. It now challenges plain browsers, and the fetch stops at the first challenge,
+so new matches must not depend on it. `src/build_dataset.py` builds on Understat and
+joins FBref's extras on (season, team, opponent, venue), numbering repeat meetings in
+date order. Checked against the FBref-based dataset: the same 7,416 rows, and identical
+scores, points, coaches and formations.
+
+One Bundesliga result differs between the two sources. Union Berlin v Bochum on 14 Dec
+2024 was 1-1 on the pitch, and Bochum was awarded a 2-0 win after a lighter hit their
+goalkeeper; FBref has the official score, Understat the on-pitch one. So FBref's score is
+used wherever FBref has the match, and every disagreement is logged. The switch also gave
+two Kiel-St Pauli rows the xG they were missing, because the sources date that match a
+day apart. That moved the headline from +0.1863 to +0.1865.
 
 `soccerdata` covers no manager-history source, so coach tenures are the one piece
 scraped by hand. English Wikipedia was tried first, but Bundesliga clubs mostly don't
@@ -70,8 +96,8 @@ challenged the first schedule page, the fetch stopped there, and the saved data 
 untouched. soccerdata still logs "Attempting to solve captcha..." just before our stop
 fires; nothing is attempted.
 
-The cost: while FBref challenges plain browsers, the Bundesliga's newest results and
-formations don't arrive through FBref.
+The cost: while FBref challenges plain browsers, new matches have no formation. Results
+no longer depend on FBref (see "Results come from Understat" above).
 
 **Transfermarkt blocks bulk scraping.** Squad data (squads, market values, January
 arrivals, injury histories; `src/fetch_squads.py`) takes ~3,000 Transfermarkt pages. The
