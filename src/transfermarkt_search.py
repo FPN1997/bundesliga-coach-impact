@@ -61,18 +61,39 @@ def search_club_id(club_name: str, *, timeout: int = 20) -> int | None:
                     "fetch_coach_history.py's docstring)", club_name)
         return None
 
-    # Results page: pull every club link in document order (search-relevance
-    # order, verified live -- NOT the order BeautifulSoup/grep would give
-    # you after any kind of sorting) and take the first one that doesn't
-    # look like a reserve/youth/women's side.
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for a in soup.find_all("a", href=CLUB_LINK_RE):
-        match = CLUB_LINK_RE.search(a["href"])
-        slug = match.group(1)
-        if RESERVE_YOUTH_RE.search(slug):
-            continue
-        return int(match.group(2))
+    candidates = club_results(resp.text)
+    if not candidates:
+        log.warning("No club section in Transfermarkt search results for %r", club_name)
+        return None
+    # Prefer a result whose name contains every word of the name searched for
+    # ("FC Arsenal" for "Arsenal"); otherwise the first senior-team result.
+    words = [_fold(w) for w in club_name.replace("-", " ").split() if len(w) >= 3]
+    for name, club_id in candidates:
+        if words and all(w in _fold(name).replace("-", " ") for w in words):
+            return club_id
+    return candidates[0][1]
 
-    log.warning("No usable club link found in Transfermarkt search results for %r", club_name)
-    return None
+
+def club_results(html: str) -> list[tuple[str, int]]:
+    """(name, id) for each senior-team result in the page's CLUBS section, in
+    relevance order. The page lists coaches first ("Suchergebnisse zu
+    Trainern"), and a coach result links to that coach's club -- taking the
+    first club link on the page used to return the club of whichever coach
+    matched the query (Arsenal -> Atletico Mancha Real, 29 Sep 2026)."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    header = next((h for h in soup.find_all("h2") if "Vereinen" in h.get_text()), None)
+    if header is None:
+        return []
+    box = header.find_parent("div", class_="box") or header.parent
+    out = []
+    for a in box.select("td.hauptlink a"):
+        match = CLUB_LINK_RE.search(a.get("href", ""))
+        if match and not RESERVE_YOUTH_RE.search(match.group(1)):
+            out.append((a.get_text(strip=True), int(match.group(2))))
+    return out
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()

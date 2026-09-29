@@ -49,6 +49,19 @@ if pgrep -f "scripts/weekly_refresh.sh" >/dev/null; then
     log "Weekly refresh is running -- skipping this slot"
     exit 0
 fi
+# At most one real run every MIN_GAP_SECONDS, however it was started (the
+# 4-hourly schedule, a missed slot catching up on wake, or by hand) -- the
+# spacing is what keeps the traffic polite.
+MIN_GAP_SECONDS=${MIN_GAP_SECONDS:-12600}   # 3.5 hours
+STAMP="$PROJECT_DIR/data/processed/.last_backfill_run"
+if [ -f "$STAMP" ]; then
+    age=$(( $(date +%s) - $(stat -f %m "$STAMP") ))
+    if [ "$age" -lt "$MIN_GAP_SECONDS" ]; then
+        log "Last run started $((age / 60)) minutes ago -- skipping this slot"
+        exit 0
+    fi
+fi
+mkdir -p "$(dirname "$STAMP")" && touch "$STAMP"
 
 source .venv/bin/activate
 log "=== Backfill run (coach histories first, then squads) ==="

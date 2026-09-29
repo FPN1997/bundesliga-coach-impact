@@ -168,6 +168,41 @@ leagues take about 100 club pages plus a search for each, well within one backfi
 budget once the block has cleared (`src/fetch_league_coaches.py`, first in the backfill's
 priority order).
 
+### Other leagues' Transfermarkt ids: league pages, not search (29 Sep 2026)
+
+The first backfill run to get past Transfermarkt's block (29 Sep) resolved clubs through
+Transfermarkt's search, then checked each id against the page title.
+
+- **66 of 141 clubs verified**, and every id that can be checked by hand is right
+  (Manchester United 985, Real Madrid 418, Juventus 506, ...).
+- **The other 75 were rejected.** The search page lists matching *coaches* before
+  clubs, and each coach result links to that coach's club. So the first club link on
+  the page was a coach's club: Arsenal came back as Atlético Mancha Real, Roma as Red
+  Star Belgrade. Two rejections were this project's own mistakes: a wrong German name
+  for Venezia, and a missing one for Strasbourg.
+
+Nothing wrong got in: the name check rejected every wrong club. But a name check alone
+can't tell "FC Arsenal" from "Arsenal Tula". So the other leagues now take their ids from
+Transfermarkt's **league pages** (`src/fetch_league_coaches.py`). Each league-season page
+lists its ~20 clubs with ids: 52 pages, cached, and past seasons are never fetched again.
+An Understat club is matched only to a club from the same league:
+
+- the Transfermarkt club must have been in the league in every season the Understat club
+  was;
+- its name must contain every word of the Understat name, with German exonyms from
+  `TM_NAMES`;
+- ties go to the exact run of seasons;
+- anything still ambiguous goes to a hand entry, never a guess.
+
+The history page is then verified against the league page's name for that id, and the
+earlier run's ids are cross-checked. The search itself was also fixed to read only its
+clubs section, because the Bundesliga's auto-resolution of newly promoted clubs still
+uses it.
+
+Every backfill run now also records when it started, and a run less than 3.5 hours after
+the last real one is skipped, however it was triggered. The spacing is what keeps the
+traffic polite.
+
 ### Other leagues: Understat, football-data.co.uk, and a byte-order mark
 
 The other top-5 leagues skip FBref entirely, because the coaching-change study doesn't
