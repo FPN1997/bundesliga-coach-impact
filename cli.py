@@ -76,6 +76,22 @@ def refresh_coach_history(fetch) -> None:
                     exc)
 
 
+def refresh_fbref(fetch) -> None:
+    """Run the FBref fetch, but if FBref's bot protection challenges us, stop
+    there and keep the previous FBref data -- the rest of the refresh still
+    runs. The fetcher never solves or retries around a challenge (see
+    src/fetch_fbref.py). Without previous data there's nothing to fall back on."""
+    from src.fetch_fbref import FBrefBlocked
+    try:
+        fetch()
+    except FBrefBlocked as exc:
+        if not (Path(config.RAW_DIR) / "fbref_schedule.parquet").exists():
+            raise
+        log.warning("FBref is challenging requests (%s) -- keeping the previous FBref data. "
+                    "Results and formations since its last successful fetch are missing until "
+                    "it stops.", exc)
+
+
 def refresh_other_leagues() -> None:
     """The other leagues only feed the coaching-change study, so a failure
     there (Understat or football-data.co.uk down) keeps last week's files
@@ -105,7 +121,7 @@ def cmd_pipeline(args) -> None:
         from src.fetch_odds import fetch_odds
         from src.fetch_understat import fetch_understat_matches
         log.info("Step 1/7: FBref (results + formations)")
-        fetch_fbref_matches()
+        refresh_fbref(fetch_fbref_matches)
         log.info("Step 2/7: Understat (xG, PPDA, deep completions)")
         fetch_understat_matches()
         log.info("Step 3/7: Coach tenure history (Transfermarkt)")

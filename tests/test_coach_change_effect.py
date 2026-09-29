@@ -179,3 +179,13 @@ def test_windows_can_measure_a_different_number_of_matches_after():
     assert t["gd_after"] == pytest.approx((df["gf"] - df["ga"]).iloc[8:13].mean())
     # windows need `after` matches left, so the last control starts 5 from the end
     assert w["date"].max() <= df["date"].iloc[-5]
+
+
+def test_an_empty_league_column_is_ignored_not_grouped_on():
+    """FBref's raw `league` column is always empty. Grouping on it silently
+    dropped every row -- the sack-o-meter got zero windows (28 Sep 2026)."""
+    df = _team(["A"] * 8 + ["B"] * 8)
+    with_empty_league = df.assign(league=pd.Series(pd.NA, index=df.index, dtype="string"))
+    a, b = cce.build_windows(df, window=W), cce.build_windows(with_empty_league, window=W)
+    assert len(b) == len(a) > 0
+    assert "league" not in b

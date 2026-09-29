@@ -104,8 +104,11 @@ def build_windows(matches: pd.DataFrame, window: int = WINDOW, after: int | None
     `window` matches before, `after` matches from the change on (default:
     the same number)."""
     after = window if after is None else after
-    # league-aware: two clubs with the same name in different leagues stay apart
-    keys = ["league", "team"] if "league" in matches else ["team"]
+    # league-aware: two clubs with the same name in different leagues stay apart.
+    # Only when the league is actually filled in: FBref's raw `league` column is
+    # always empty, and grouping on an empty key silently drops every row
+    # (this broke the sack-o-meter's windows once, on 28 Sep 2026).
+    keys = ["league", "team"] if "league" in matches and matches["league"].notna().all() else ["team"]
     matches = matches.dropna(subset=["points"]).sort_values([*keys, "date"])
     rows = []
     for key, g in matches.groupby(keys):

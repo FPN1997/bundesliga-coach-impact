@@ -38,13 +38,40 @@ first time this happened, the scraper silently wrote a 1-row file over ~1,600 re
 rows, which removed the coach from 98% of matches without a single crash anywhere in
 the chain. That incident is why every fetcher now has an overwrite guard (below).
 
-**FBref throttles long browser sessions.** Extending the data back to 2014-15 meant
-downloading ~90 more FBref pages. The first ~20 came at ~10 seconds each; after that,
-FBref's Cloudflare protection challenged every page, and each one cost a ~5-minute
-timeout before a retry got through (it's the browser *session* that gets flagged — a
-fresh browser was fast again). `fetch_fbref.py` now starts a fresh browser every 12
-downloaded pages. The weekly refresh only downloads the current season (~1 page per
-club), so it's rarely affected.
+**FBref: stop at the first challenge (fixed 29 Sep 2026, after getting it wrong).**
+FBref sits behind Cloudflare. For the 2014-15 backfill, the first ~20 pages came at ~10
+seconds each; after that Cloudflare challenged the browser session. The fix at the time
+was to start a fresh browser every 12 pages. That worked by resetting Cloudflare's
+per-session limit, which is a way around the limit, not a response to it.
+
+The 28 Sep weekly refresh then showed the bigger problem, inside soccerdata itself:
+
+- **Undetected browser.** soccerdata's FBref reader drives Chrome in SeleniumBase's
+  "undetected" mode (`uc=True`), which is built to keep sites from recognising automation.
+- **Visible browser plus a CAPTCHA clicker.** It defaults to a visible browser
+  (`headless=False`, although its docstring says `True`). In that mode it answers a
+  CAPTCHA by clicking through the Cloudflare challenge itself (`uc_gui_handle_captcha`,
+  `uc_gui_handle_cf`).
+- **Retries around the challenge.** It reloads a challenged page and restarts the browser,
+  up to 5 times per page.
+
+That refresh logged three CAPTCHAs, so the clicker was tried. Nobody asked for this, and
+it contradicts this project's rule for Transfermarkt (stop at a block, never route around
+it). The run was stopped as soon as it was found. `fetch_fbref.py` now uses `PoliteFBref`:
+
+- plain Chrome (`uc=False`), always headless, so the GUI clicker can never run;
+- its CAPTCHA "solver" is replaced by a hard stop. The stop is a `BaseException`, because
+  soccerdata's retry loop catches `Exception`;
+- the browser-restart workaround is gone.
+
+The first challenge now raises `FBrefBlocked`, and `bundesliga pipeline` keeps the previous
+FBref data (`cli.refresh_fbref`). Verified against the live site on 29 Sep: FBref
+challenged the first schedule page, the fetch stopped there, and the saved data was
+untouched. soccerdata still logs "Attempting to solve captcha..." just before our stop
+fires; nothing is attempted.
+
+The cost: while FBref challenges plain browsers, the Bundesliga's newest results and
+formations don't arrive through FBref.
 
 **Transfermarkt blocks bulk scraping.** Squad data (squads, market values, January
 arrivals, injury histories; `src/fetch_squads.py`) takes ~3,000 Transfermarkt pages. The
@@ -275,9 +302,9 @@ visibly *look* wrong for:
   on the opponent and venue, never on the team itself; and with a planted "sacked teams
   got easier fixtures" confound, the unadjusted estimate is inflated while the adjusted one
   recovers the planted effect.
-- **FBref browser restarts** (`test_fetch_fbref.py`) — a fresh browser every 12 downloaded
-  pages, for both backfill-shaped and weekly-shaped runs (verified to fail with the
-  restarts disabled).
+- **FBref stops at the first challenge** (`test_fetch_fbref.py`): the reader is plain,
+  headless Chrome; the CAPTCHA hook raises instead of solving; the stop escapes
+  soccerdata's retry loop; nothing is half-written; the refresh keeps the previous data.
 - **`predict.py`** (`test_predict.py`) and the coach-bounce join (`test_coach_bounce.py`).
 - **The results page** (`test_site.py`) — scraped names embedded in the page can't
   break out of its `<script>` block (checked by removing the escaping and watching the
@@ -313,6 +340,16 @@ Everything tunable is in `config.py`:
 ## Bugs found and fixed
 
 Kept here because each one produced plausible-looking output rather than an error.
+
+- **An empty column that emptied the sack-o-meter (28 Sep 2026).** Making the window
+  builder league-aware meant grouping by league whenever a `league` column exists. The
+  Bundesliga table has one, from FBref, and it's always empty. pandas silently drops
+  groups whose key is empty, so on that table the builder returned *no* windows at all.
+  The study was unaffected, because it runs on the combined table where the league is
+  filled in. The sack-o-meter reads the Bundesliga table directly and crashed the weekly
+  refresh. The builder now groups by league only when it's filled in, a regression test
+  covers an all-empty league column, and the meter skips a missing estimate with a
+  warning instead of failing the refresh.
 
 - **A stale "recent formation."** `predict.py` computed a team's current formation
   tendency with the same function training uses, which (correctly, for training)

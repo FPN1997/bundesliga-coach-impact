@@ -243,13 +243,17 @@ def track_record(states: pd.DataFrame, pred: pd.Series, top: int = 3) -> dict:
     }
 
 
-def recovery_fit(matches: pd.DataFrame, before: int) -> dict:
+def recovery_fit(matches: pd.DataFrame, before: int) -> dict | None:
     """Control-window regression (as in coach_change_effect.py) of PPG over
     the next RECOVERY_HORIZON matches on form over the last `before`: what a
     club in this position that keeps its coach takes, on average."""
     w = cce.build_windows(matches, window=before, after=RECOVERY_HORIZON)
+    if w.empty:
+        return None  # no comparison windows: the caller skips the recovery estimate
     ctrl = w[w["in_season"] & (w["kind"] == "control")].dropna(
         subset=["ppg_before", "xgd_before", "fixture_change", "ppg_after"])
+    if ctrl.empty:
+        return None
     X = np.column_stack([np.ones(len(ctrl)), ctrl[["ppg_before", "xgd_before", "fixture_change"]].to_numpy()])
     beta = np.linalg.lstsq(X, ctrl["ppg_after"].to_numpy(), rcond=None)[0]
     resid = ctrl["ppg_after"].to_numpy() - X @ beta
@@ -299,7 +303,15 @@ def current_meter(matches: pd.DataFrame, states: pd.DataFrame, odds: pd.DataFram
             row["sack_risk"] = float(risk_model.predict_proba(state)[0, 1])
 
         before = int(min(FORM_WINDOW, r.season_matches))
-        fit = fits.setdefault(before, recovery_fit(matches, before))
+        if before not in fits:
+            fits[before] = recovery_fit(matches, before)
+            if fits[before] is None:
+                log.warning("No comparison windows with %d matches before -- skipping the "
+                            "recovery estimate for those clubs", before)
+        fit = fits[before]
+        if fit is None:
+            clubs.append(row)
+            continue
         nxt = upcoming[upcoming["team"] == r.team].head(RECOVERY_HORIZON)
         past = played[played["team"] == r.team].tail(before)
         ease_before = past["fixture_ease"]

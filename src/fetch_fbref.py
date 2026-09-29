@@ -13,14 +13,24 @@ Two things verified against live data that shape this file (see README
    `round` value ("Matchweek 1", "Matchweek 2", ...) -- everything else
    (`round` like "Round of 64", "Group stage") gets filtered out.
 
-FBref sits behind Cloudflare, which starts challenging a browser session
-after roughly 20 page loads -- each challenged page then costs a ~5-minute
-timeout before soccerdata's retry gets through. A fresh browser session is
-fast again, so the fetch restarts the browser every PAGES_PER_BROWSER_SESSION
-downloaded pages. (Found during the 2014-15 backfill: ~10 s per page for the
-first ~20 pages, then ~5 min per page; a restart brought back ~10 s.) The
-weekly refresh only downloads the current season (~1 page per club), so it
-rarely restarts; a multi-season backfill restarts roughly once per club.
+FBref sits behind Cloudflare. **A challenge is FBref saying no, and the
+fetch stops at the first one** -- the same rule as for Transfermarkt
+(src/transfermarkt_client.py). That needs PoliteFBref below, because
+soccerdata's own FBref reader does the opposite by default (found in the
+28 Sep 2026 weekly refresh log, see docs/engineering-notes.md):
+
+- it drives Chrome in "undetected" mode (SeleniumBase uc=True), built to
+  keep a site from recognising automation;
+- its default is a VISIBLE browser (headless=False, although its docstring
+  says True), and in that mode it answers a CAPTCHA by clicking through the
+  Cloudflare challenge itself (uc_gui_handle_captcha / uc_gui_handle_cf);
+- it reloads a challenged page and restarts the browser, 5 times per page.
+
+PoliteFBref runs plain, headless Chrome and turns the first challenge into
+FBrefBlocked; the weekly refresh then keeps last week's FBref data. (An
+earlier version of this file also restarted the browser every 12 pages to
+reset Cloudflare's per-session throttling -- also a way around a limit, and
+removed for the same reason.)
 
 Guarded against silently regressing (see src/data_guard.py) two ways: a
 minimum fraction of requested teams must actually fetch successfully
@@ -35,7 +45,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -49,12 +58,41 @@ log = logging.getLogger(__name__)
 
 LEAGUE_ROUND_RE = re.compile(config.FBREF_LEAGUE_ROUND_PATTERN)
 GAME_ID_RE = re.compile(r"/en/matches/([0-9a-f]+)/")
-PAGES_PER_BROWSER_SESSION = 12  # comfortably under Cloudflare's ~20-page threshold
 
 
-def _pages_written_since(fbref: sd.FBref, since: float) -> int:
-    """Match-log pages downloaded (created or re-downloaded) since `since`."""
-    return sum(1 for f in Path(fbref.data_dir).glob("matchlogs_*") if f.stat().st_mtime >= since)
+class FBrefBlocked(RuntimeError):
+    """FBref's Cloudflare protection challenged us. Stop and keep the previous
+    data -- never solve, click through or retry around a challenge."""
+
+
+class _Challenged(BaseException):
+    """Raised from inside soccerdata's download loop. That loop catches
+    Exception and retries (reloading, restarting the browser); a
+    BaseException is the one thing that gets straight out of it."""
+
+
+class PoliteFBref(sd.FBref):
+    """soccerdata's FBref reader with every way around bot protection removed:
+    headless (so the GUI CAPTCHA clicker can never run), plain Chrome instead
+    of undetected mode, and the CAPTCHA "solver" replaced by a hard stop."""
+
+    def __init__(self, **kwargs):
+        kwargs["headless"] = True
+        super().__init__(**kwargs)
+
+    @classmethod
+    def _all_leagues(cls) -> dict[str, str]:
+        # soccerdata looks up supported leagues by class name; keep FBref's
+        return sd.FBref._all_leagues()
+
+    def _init_webdriver(self):
+        import seleniumbase as sb
+        if hasattr(self, "_driver"):
+            self._driver.quit()
+        return sb.Driver(uc=False, headless=True, binary_location=self.path_to_browser)
+
+    def solve_captcha(self) -> None:
+        raise _Challenged("FBref showed a CAPTCHA / Cloudflare challenge")
 
 
 def _teams_for_season(fbref: sd.FBref) -> list[str]:
@@ -64,22 +102,25 @@ def _teams_for_season(fbref: sd.FBref) -> list[str]:
 
 def fetch_fbref_matches() -> pd.DataFrame:
     """Return one row per team-match (league matches only) with formations."""
-    fbref = sd.FBref(leagues=config.LEAGUE, seasons=config.SEASONS)
+    try:
+        return _fetch_fbref_matches()
+    except _Challenged as exc:
+        raise FBrefBlocked(f"{exc} -- stopped at the first challenge, nothing solved or retried. "
+                           "Previously saved FBref data is untouched.") from None
+
+
+def _fetch_fbref_matches() -> pd.DataFrame:
+    fbref = PoliteFBref(leagues=config.LEAGUE, seasons=config.SEASONS)
 
     teams = _teams_for_season(fbref)
     log.info("Fetching FBref team schedules for %d teams across seasons %s",
               len(teams), config.SEASONS)
 
     frames = []
-    session_start = time.time()
     for team in teams:
-        if _pages_written_since(fbref, session_start) >= PAGES_PER_BROWSER_SESSION:
-            log.info("Restarting the browser (Cloudflare throttles long FBref sessions)")
-            fbref._init_webdriver()  # quits the old browser, starts a fresh one
-            session_start = time.time()
         try:
             df = fbref.read_team_match_stats(stat_type="schedule", team=team)
-        except Exception as exc:  # one bad team shouldn't kill the run
+        except Exception as exc:  # one bad team shouldn't kill the run (a challenge still stops it)
             log.error("Failed to fetch schedule for %s: %s", team, exc)
             continue
         df = df.reset_index()
