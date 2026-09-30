@@ -45,6 +45,22 @@ def test_a_renamed_club_keeps_one_transfermarkt_id_for_both_eras():
     assert matched == {"Parma": 130, "Parma Calcio 1913": 130} and failed == {}
 
 
+def test_the_exact_transfermarkt_name_breaks_a_tie():
+    """"AC" is too short to count as a word, so "AC Mailand" also matches
+    "Inter Mailand"; the exactly spelled name wins (as for AS Rom / Lazio Rom)."""
+    us = {"AC Milan": ALL, "Inter": ALL}
+    matched, failed = flc.match_clubs(us, {5: "AC Mailand", 46: "Inter Mailand"}, {5: ALL, 46: ALL})
+    assert matched == {"AC Milan": 5, "Inter": 46} and failed == {}
+
+
+def test_only_the_staff_history_of_the_requested_id_counts():
+    page = '<link rel="canonical" href="https://www.transfermarkt.de/fc-chelsea/mitarbeiterhistorie/verein/631">'
+    homepage = '<link rel="canonical" href="https://www.transfermarkt.de/">'
+    assert flc.page_is_staff_history_of(page, 631)
+    assert not flc.page_is_staff_history_of(page, 63)       # a prefix of the id isn't the id
+    assert not flc.page_is_staff_history_of(homepage, 631)  # a redirect to the homepage (seen live)
+
+
 def test_an_ambiguous_club_is_left_for_a_hand_entry():
     us = {"Real": ALL}
     matched, failed = flc.match_clubs(us, {1: "Real Madrid", 2: "Real Sociedad"}, {1: ALL, 2: ALL})
@@ -56,7 +72,8 @@ def league_env(monkeypatch, tmp_path):
     monkeypatch.setattr(flc.config, "RAW_DIR", str(tmp_path / "raw"))
     for name in ("IDS_PATH", "OUT_PATH", "STATUS_PATH"):
         monkeypatch.setattr(flc, name, tmp_path / f"{name}.json")
-    titles = {12: "AS Rom - Mitarbeiterhistorie", 13: "Roter Stern Belgrad - Mitarbeiterhistorie"}
+    # the page served for each id: id 13 answers with some other club's staff history
+    serves = {12: 12, 13: 159}
     fetched = []
 
     def fake_table(tm_name, club_id, *, cache_path, use_cache, **kw):
@@ -65,7 +82,8 @@ def league_env(monkeypatch, tmp_path):
                 raise tm.RequestBudgetReached("budget")
             fetched.append(club_id)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(f"<html><title>{titles[club_id]}</title></html>")
+            cache_path.write_text('<html><head><link rel="canonical" href="https://www.transfermarkt.de/x/'
+                                  f'mitarbeiterhistorie/verein/{serves[club_id]}"></head></html>')
         return pd.DataFrame({"team": [tm_name], "coach": ["X"], "start_date": ["2020-07-01"],
                              "end_date": [None]})
 
@@ -82,10 +100,11 @@ def test_verified_clubs_are_kept_and_the_rest_recorded_for_a_hand_entry(monkeypa
     status = flc.fetch_league_coaches()
     league = status["leagues"]["ITA-Serie A"]
     assert league["fetched"] == 1 and set(league["failed"]) == {"Genoa", "Napoli"}
-    assert "doesn't name" in league["failed"]["Napoli"]    # page for id 13 isn't SSC Neapel's
+    assert "isn't its staff history" in league["failed"]["Napoli"]  # id 13's page is another club's
     assert status["complete"] is True
     assert list(pd.read_csv(flc.OUT_PATH)["team"]) == ["Roma"]
 
+    assert not flc.cache_path("ITA-Serie A", "Napoli", 13).exists()   # a failed page isn't kept
     league_env.clear()
     flc.fetch_league_coaches()
     assert league_env == [13]  # Roma's page is cached; only the rejected one is retried

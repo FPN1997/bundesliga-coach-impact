@@ -199,6 +199,25 @@ earlier run's ids are cross-checked. The search itself was also fixed to read on
 clubs section, because the Bundesliga's auto-resolution of newly promoted clubs still
 uses it.
 
+The first league-page run (29 Sep) verified 107 of 141 clubs. The other 34 exposed three
+more problems, fixed on 30 Sep:
+
+- **A stale cache.** Pages were saved under the club's name, so pages saved under wrong ids by
+  the search-based run were reused for the right ids. For Chelsea that was Transfermarkt's
+  homepage, reached by redirect. Pages are now saved per club *and* id, and a failed page is
+  always deleted.
+- **Renamed clubs.** The history page title carries today's name ("Palermo FC"); the 2014
+  league page, the name at the time ("US Palermo"). Verification is now whether the page's
+  canonical link is the staff history of exactly the requested id, which also rejects a
+  homepage redirect.
+- **Ties.** "AC Mailand" also matches "Inter Mailand" once the short "AC" is ignored (and "AS
+  Rom" matches "Lazio Rom", "FC Turin" matches "Juventus Turin"), so an exactly spelled name
+  now wins a tie.
+
+A dry run from the cached league pages now matches all 141 clubs, with none left for a hand
+entry. The one match made by run of seasons alone is SPAL 2013 → SPAL (Serie A 2017-2019),
+which is correct. All 107 already-saved pages pass the new check.
+
 Every backfill run now also records when it started, and a run less than 3.5 hours after
 the last real one is skipped, however it was triggered. The spacing is what keeps the
 traffic polite.

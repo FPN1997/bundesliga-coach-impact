@@ -16,8 +16,13 @@ not its search:
   a club whose name doesn't match any candidate is still accepted when
   exactly one candidate has exactly its seasons. Anything else is recorded
   for a hand entry -- never guessed.
-- The club's history page is then verified: its title must name the club
-  the league page listed under that id.
+- The club's history page is then verified: its canonical link must be the
+  staff history of exactly that id (a redirect to the homepage, or any other
+  page, fails). Not the page title: clubs get renamed ("US Palermo" on the
+  2014 league page is "Palermo FC" today). Pages are cached per club AND
+  id, so a page saved under a wrong id can never be reused -- that happened
+  once: pages the search-based run saved under wrong ids (Transfermarkt's
+  homepage, for Chelsea) were reused for the right ids by club name.
 
 Why not the search: on 29 Sep 2026 the first backfill run that got through
 used Transfermarkt's club search, which lists matching COACHES first, each
@@ -65,8 +70,9 @@ STATUS_PATH = Path(config.PROCESSED_DIR) / "coach_history_other_leagues_status.j
 CLUB_LINK_RE = re.compile(r"/([a-z0-9-]+)/startseite/verein/(\d+)")
 
 
-def cache_path(league: str, club: str) -> Path:
-    return Path(config.RAW_DIR) / "transfermarkt_coaches" / league / f"{club.replace(' ', '_')}.html"
+def cache_path(league: str, club: str, club_id: int) -> Path:
+    return (Path(config.RAW_DIR) / "transfermarkt_coaches" / league
+            / f"{club.replace(' ', '_')}_{club_id}.html")
 
 
 def league_page_path(league: str, year: int) -> Path:
@@ -140,8 +146,13 @@ def match_clubs(us: dict[str, set[int]], tm_names: dict[int, str],
                  if words and all(w in fold(tm_names[i]).replace("-", " ") for w in words)]
         exact = [i for i in candidates if tm_seasons[i] == years]
         named_exact = [i for i in named if i in exact]
+        # "AC Mailand" also matches "Inter Mailand" once the short "AC" is
+        # dropped: a candidate named exactly like the club wins such a tie
+        spelled = [i for i in named if fold(tm_names[i]) == fold(TM_NAMES.get(club, club))]
         if len(named) == 1:
             matched[club] = named[0]
+        elif len(spelled) == 1:
+            matched[club] = spelled[0]
         elif len(named) > 1 and len(named_exact) == 1:
             matched[club] = named_exact[0]
         elif not named and len(exact) == 1:
@@ -174,20 +185,26 @@ def _save_state(state: dict) -> None:
     IDS_PATH.write_text(json.dumps(state, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
 
 
-def _page_title(path: Path) -> str:
+def page_is_staff_history_of(html: str, club_id: int) -> bool:
+    """Is this Transfermarkt page the staff history of exactly `club_id`?"""
     from bs4 import BeautifulSoup
-    soup = BeautifulSoup(path.read_text(encoding="utf-8"), "html.parser")
-    return soup.title.get_text(strip=True) if soup.title else ""
+    canonical = BeautifulSoup(html, "html.parser").find("link", rel="canonical")
+    href = canonical.get("href", "") if canonical else ""
+    return re.search(rf"/mitarbeiterhistorie/verein/{club_id}(/|$)", href) is not None
 
 
 def _history(league: str, club: str, club_id: int, tm_name: str) -> pd.DataFrame:
-    """The club's history page (cached), verified against the league page's name for that id."""
-    path = cache_path(league, club)
-    table = _fetch_club_table(tm_name, club_id, cache_path=path, use_cache=True)
-    title = _page_title(path)
-    if fold(tm_name) not in fold(title):
-        path.unlink(missing_ok=True)
-        raise ValueError(f"page title {title!r} doesn't name {tm_name!r}")
+    """The club's history page (cached per club and id), verified to be that id's staff history."""
+    path = cache_path(league, club, club_id)
+    try:
+        table = _fetch_club_table(tm_name, club_id, cache_path=path, use_cache=True)
+        if not page_is_staff_history_of(path.read_text(encoding="utf-8"), club_id):
+            raise ValueError(f"the page fetched for id {club_id} isn't its staff history")
+    except (TransfermarktBlocked, RequestBudgetReached):
+        raise
+    except Exception:
+        path.unlink(missing_ok=True)  # never reuse a page that failed
+        raise
     return table.assign(team=club, league=league)
 
 
@@ -208,7 +225,6 @@ def fetch_league_coaches() -> dict:
                 if old is not None and old != club_id:
                     log.warning("  %s: the league pages say id %d (%s), an earlier run had %d -- "
                                 "using %d", club, club_id, tm_names[club_id], old, club_id)
-                    cache_path(league, club).unlink(missing_ok=True)
             state["ids"][league], state["failed"][league] = matched, failed
             state["tm_names"][league] = {c: tm_names[i] for c, i in matched.items()}
         for league, matched in state["ids"].items():
@@ -233,13 +249,13 @@ def fetch_league_coaches() -> dict:
 
     frames = [_history(league, club, club_id, state["tm_names"][league][club])
               for league, ids in state["ids"].items() for club, club_id in ids.items()
-              if cache_path(league, club).exists()]
+              if cache_path(league, club, club_id).exists()]
     if frames:
         out = pd.concat(frames, ignore_index=True).sort_values(["league", "team", "start_date"])
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         out.to_csv(OUT_PATH, index=False)
 
-    fetched = {league: sum(cache_path(league, c).exists() for c in state["ids"].get(league, {}))
+    fetched = {league: sum(cache_path(league, c, i).exists() for c, i in state["ids"].get(league, {}).items())
                for league in us}
     status = {
         "leagues": {league: {"clubs": len(clubs), "fetched": fetched[league],
