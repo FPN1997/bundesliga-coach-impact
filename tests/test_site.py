@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
+
 from src import site
 
 
@@ -97,3 +99,19 @@ def test_page_build_draws_the_meter_image_only_when_there_is_a_meter(monkeypatch
     data["sack_o_meter"] = _meter()
     site.build_site()
     assert (tmp_path / site.METER_IMAGE).exists()
+
+
+def test_page_script_is_valid_javascript(tmp_path):
+    """A syntax error stops the whole page script, and a browser may not even
+    log it (a duplicate `const` once blanked the page, 30 Sep 2026)."""
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    script = re.findall(r"<script>(.*?)</script>", site.TEMPLATE.read_text(), flags=re.S)[-1]
+    (tmp_path / "page.js").write_text(script)
+    result = subprocess.run([node, "--check", str(tmp_path / "page.js")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

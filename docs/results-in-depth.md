@@ -3,7 +3,8 @@
 The full modelling write-up. The [README](../README.md) has the headline findings;
 [engineering-notes.md](engineering-notes.md) covers the pipeline, tests and automation.
 Every number here comes from one `bundesliga reproduce` run on thirteen seasons of data
-(2014-15 to 2026-27, through 2026-09-20). The held-out test set for the forecasting
+(2014-15 to 2026-27, through 2026-09-20). The coaching-change study covers Europe's top five
+leagues; everything else is the Bundesliga. The held-out test set for the forecasting
 models is the 2025-26 season plus the 2026-27 matches played so far (321 matches).
 
 - [The effect of a coaching change](#the-effect-of-a-coaching-change)
@@ -16,63 +17,77 @@ models is the 2025-26 season plus the 2026-27 matches played so far (321 matches
 
 ## The effect of a coaching change
 
-`src/coach_change_effect.py`, run with `bundesliga coach-effect`.
+`src/coach_change_effect.py`, run with `bundesliga coach-effect`, on five leagues: the
+Premier League, La Liga, Bundesliga, Serie A and Ligue 1, 2014-15 to 2026-27 (see
+[More leagues](#more-leagues) for how they're combined).
 
 A raw before/after comparison of a sacking is badly confounded: clubs sack coaches after
 bad runs, and bad runs recover on their own. So every coaching change is compared with
-"control" windows — the same 8-matches-before / 8-matches-after comparison at moments
+"control" windows: the same 8-matches-before / 8-matches-after comparison at moments
 when a team did **not** change coach.
 
 - **Windows.** For each team and match *i*: the 8 matches before *i* vs. the 8 from *i*
   on. "Treated" if the coach changes exactly at *i* (and the before-half belongs to a
   single coach); "control" if one coach covers all 16 matches; otherwise skipped.
 - **Mid-season vs. summer.** A window spanning the summer break mixes in transfers and
-  pre-season, so mid-season sackings — the "new coach bounce" people argue about — are
+  pre-season. So mid-season sackings (the "new coach bounce" people argue about) are
   the headline, and summer appointments are estimated separately against summer-spanning
   controls.
 - **Adjustment.** The expected change for each treated window comes from a linear
-  regression fit on control windows only, on three things: PPG before (how bad the run
-  was), xG difference before (how much of it was bad luck rather than bad play), and the
-  change in fixture difficulty between the two halves (below). Regression to the mean is
-  linear in the before-value, and the binned control means sit on the fitted line (see
-  the chart).
-- **Uncertainty.** Control windows from one team overlap and are strongly correlated, so
-  the 95% intervals come from a bootstrap that resamples whole teams.
+  regression fit on control windows only. It uses PPG before (how bad the run was), xG
+  difference before (how much of it was bad luck rather than bad play), the change in
+  fixture difficulty between the two halves (below), and one intercept per league.
+  Regression to the mean is linear in the before-value, and the binned control means sit
+  on the fitted line (see the chart).
+- **Uncertainty.** Control windows from one club overlap and are strongly correlated, so
+  the 95% intervals come from a bootstrap that resamples whole clubs.
 
-A first attempt used coarsened exact matching instead of the regression. It had to drop
-11 of 39 mid-season sackings — the worst runs, where control windows are rare — which
-are exactly the cases the question is about, so it was replaced.
+A first attempt, on the Bundesliga's first 39 sackings, used coarsened exact matching
+instead of the regression. It had to drop 11 of them: the worst runs, where control
+windows are rare. Those are exactly the cases the question is about, so it was replaced.
 
 ![Coaching-change effect](coach_change_effect.png)
 
-| | n | Raw change | Expected anyway | Effect | 95% interval |
+| All five leagues | n | Raw change | Expected anyway | Effect | 95% interval |
 |---|---|---|---|---|---|
-| **Points per game, mid-season** | 65 | +0.54 | +0.35 | **+0.19** | +0.04 to +0.30 |
-| **xG difference per game, mid-season** | 65 | +0.41 | +0.10 | **+0.31** | +0.11 to +0.46 |
-| Points per game, summer | 78 | +0.25 | +0.20 | +0.05 | −0.07 to +0.15 |
-| xG difference per game, summer | 78 | +0.18 | +0.07 | +0.11 | −0.08 to +0.27 |
+| **Points per game, mid-season** | 384 | +0.44 | +0.35 | **+0.10** | +0.04 to +0.14 |
+| **xG difference per game, mid-season** | 384 | +0.30 | +0.11 | **+0.19** | +0.13 to +0.24 |
+| Points per game, summer | 384 | +0.15 | +0.17 | −0.01 | −0.08 to +0.05 |
+| xG difference per game, summer | 384 | +0.06 | +0.06 | +0.01 | −0.07 to +0.08 |
 
-*(controls: 3,199 mid-season windows, 1,643 summer-spanning)*
+*(controls: 20,246 mid-season windows, 9,113 summer-spanning)*
 
-**Reading it.** About two thirds of the points "bounce" after a mid-season sacking is what
-similar teams that kept their coach did anyway; the remaining +0.19 PPG is the effect of
-the change, and its interval excludes zero. The two measures agree closely: across the
-control windows, +1 xG difference per game goes with +0.58 points per game over 8
-matches, so the xG effect implies +0.18 PPG (+0.06 to +0.26) — almost exactly the
-measured points effect. Summer appointments show no clear effect on either measure.
+| Mid-season, league by league | n | Raw change | Expected anyway | Points effect | xG difference effect |
+|---|---|---|---|---|---|
+| Premier League | 71 | +0.49 | +0.36 | +0.12 (−0.01 to +0.23) | +0.14 (+0.02 to +0.24) |
+| La Liga | 91 | +0.40 | +0.35 | +0.05 (−0.07 to +0.14) | +0.14 (+0.01 to +0.23) |
+| Bundesliga | 65 | +0.54 | +0.35 | +0.19 (+0.04 to +0.30) | +0.31 (+0.11 to +0.46) |
+| Serie A | 83 | +0.45 | +0.36 | +0.09 (−0.02 to +0.19) | +0.18 (+0.06 to +0.28) |
+| Ligue 1 | 74 | +0.36 | +0.29 | +0.07 (−0.03 to +0.15) | +0.21 (+0.08 to +0.31) |
 
-**How this changed with more data.** On the first 8 seasons alone (39 sackings, no
-fixture adjustment) the points effect was +0.09 (−0.06 to +0.23): consistent with the xG
-effect, but too noisy to separate from zero. Extending the data back to 2014-15 — as far
-as Understat's xG goes — added 26 sackings. By era, the points effect is +0.28 (2014-19)
-and +0.13 (2019 on), while the xG effect runs the other way (+0.22 and +0.38): the two
-measures disagreeing in opposite directions is what luck in the points looks like, so
-the pooled estimate is the one to trust. The biggest older positive swings are
-well-known turnarounds (Korkut at Stuttgart in 2018, Kovač saving Frankfurt from
-relegation in 2016, Stöger at Dortmund in 2017); the biggest misses include Hollerbach at
-a relegated Hamburg in 2018.
+*(each league on its own, against its own comparison windows)*
 
-The single biggest positive surprise in the data is Tayfun Korkut replacing Hannes Wolf
+**Reading it.** About 78% of the points "bounce" after a mid-season sacking
+is what similar teams that kept their coach did anyway. The remaining +0.10 PPG
+is the effect of the change, and its interval clearly excludes zero. The two measures
+agree: across the control windows, +1 xG difference per game goes with
++0.62 points per game over 8 matches. So the xG effect implies
++0.12 PPG (+0.08 to +0.15), close to the measured
+points effect. Summer appointments show no effect on either measure. Every league's interval contains the pooled estimate,
+so the data are consistent with one small effect everywhere. With 65 to 91 sackings per
+league, they can't rule out moderate differences between leagues either.
+
+**How the estimate evolved.** The study grew in three steps:
+
+| Data | Mid-season sackings | Points effect |
+|---|---|---|
+| Bundesliga, first 8 seasons (no fixture adjustment) | 39 | +0.09 (−0.06 to +0.23) |
+| Bundesliga, 2014-15 on | 65 | +0.19 (+0.04 to +0.30) |
+| Five leagues, 2014-15 on | 384 | +0.10 (+0.04 to +0.14) |
+
+The Bundesliga-only +0.19 turned out to be the highest of the five leagues, as a small
+sample's estimate often is. With six times the sackings, the interval is less than half
+as wide. The Bundesliga's biggest positive surprise is Tayfun Korkut replacing Hannes Wolf
 at Stuttgart in February 2018: 0.50 → 2.25 PPG, against an expected +0.59.
 
 **Match by match.** The same regression, fit on each single match's points instead of
@@ -81,54 +96,67 @@ the change to 8 after (`event_study()`; `outputs/coach_change_event_study.png`):
 
 ![Points per game match by match around a mid-season sacking](coach_change_event_study.png)
 
-Two things show up that the 8-match averages hide. Sacked teams were doing slightly
-*better* than expected until three matches before the change, then collapsed: 0.35 and
-0.15 points per game in the last two matches, against about 0.74 expected. (Across all 8
-matches before, the lines average the same by construction — PPG before is a covariate —
-so only the shape there is informative, not the level.) After the change they sit above
-the expected line in six of eight matches; the gap averages exactly the headline +0.19,
-since least squares is linear in the outcome.
+Two things show up that the 8-match averages hide:
+
+- **A late collapse.** Sacked teams were doing slightly *better* than expected until three
+  matches before the change, then collapsed: 0.52 and
+  0.27 points per game in the last two matches, against about
+  0.77 expected. Across all 8 matches before, the lines average the
+  same by construction (PPG before is a covariate), so only the shape there is informative,
+  not the level.
+- **A steady lead after.** After the change, sacked teams sit above the expected line in
+  all of the eight matches. The gap averages exactly the headline
+  +0.10, since least squares is linear in the outcome.
 
 That late collapse raises a fair objection: a team sacked after two heavy defeats might
 rebound more than its 8-match form suggests, whoever the coach. So the estimate was re-run
-with PPG over the last two matches as a fourth covariate (reported in every run as
+with PPG over the last two matches as an extra covariate (reported in every run as
 `mid_season_specifications.plus_last_2_matches`):
 
 | Mid-season, adjusted for | Points effect | xG difference effect |
 |---|---|---|
-| PPG and xG before, fixtures (headline) | +0.19 (+0.04 to +0.30) | +0.31 |
-| … plus PPG in the last 2 matches | +0.18 (+0.03 to +0.29) | +0.29 |
+| PPG and xG before, fixtures, league baselines (headline) | +0.10 (+0.04 to +0.14) | +0.19 |
+| … plus PPG in the last 2 matches | +0.09 (+0.04 to +0.14) | +0.18 |
 
 Among control windows, the last two results add almost nothing once the 8-match form is
-known (coefficient −0.02), so the effect is not an artefact of when clubs pull the trigger.
+known (coefficient −0.02). So the effect is not an artefact of when clubs pull the
+trigger.
 
 **Fixture difficulty.** Every match is rated by the points an *average* team would expect
-from it — the opponent's season-average rating in the betting market, plus home or away
-(`src/fixture_difficulty.py`) — and the change in that rating between the 8 matches
-before and after is the third covariate. Only the opponent and the venue enter, never the
-sacked team's own odds, which already price in the new coach and would subtract part of
-the effect being measured. The fitted coefficient is 1.0 (a run of fixtures worth +0.1 PPG
-to an average team is worth +0.1 PPG here), a good sign the rating is on the right scale.
-Sacked teams' next fixtures were barely easier than usual (+0.01 PPG, vs. 0.00 for
-controls), so the adjustment moves the estimate only slightly, from +0.16 to +0.19.
+from it: the opponent's season-average rating in the betting market, plus home or away
+(`src/fixture_difficulty.py`), fit within each league. The change in that rating between
+the 8 matches before and after is a covariate. Only the opponent and the venue enter,
+never the sacked team's own odds, which already price in the new coach and would subtract
+part of the effect being measured.
 
-**Could it just be new signings?** German clubs can only register players during two
-windows, winter (January to the start of February) and summer (July to the start of
-September; 2020's ran to 5 October), listed with sources in `config.TRANSFER_WINDOWS`. So
-the mid-season sackings split into those where a window was open during the 8 matches
-after the change, and those where it wasn't and the squad was frozen — each compared
-against control windows of the same kind:
+- **The rating is on the right scale.** The fitted coefficient is
+  0.99: a run of fixtures worth
+  +0.1 PPG to an average team is worth +0.1 PPG here.
+- **Sacked teams didn't get easier fixtures.** Their next fixtures were barely easier than
+  usual (+0.004 PPG, against 0.000 for controls).
+- **The adjustment still matters a little.** It moves the estimate from
+  +0.07 to +0.10.
+
+**Could it just be new signings?** Clubs can only register players during two transfer
+windows. So the mid-season sackings split into two groups, each compared against control
+windows of the same kind:
+
+- a window was open during the 8 matches after the change;
+- it wasn't, and the squad was frozen.
+
+The window dates are the German ones, listed with sources in `config.TRANSFER_WINDOWS`,
+and are used for all five leagues. The others' dates differ by days to weeks (England's
+summer window closed before the season in 2018 and 2019), so this split is approximate
+outside the Bundesliga.
 
 | Mid-season sackings | n | Points effect | xG difference effect |
 |---|---|---|---|
-| Window open after the change | 26 | +0.19 (−0.02 to +0.36) | +0.44 (+0.17 to +0.67) |
-| No window after the change (squad frozen) | 39 | +0.20 (+0.00 to +0.36) | +0.23 (−0.03 to +0.42) |
+| Window open after the change | 145 | +0.08 (−0.01 to +0.16) | +0.22 (+0.12 to +0.31) |
+| No window after the change (squad frozen) | 239 | +0.10 (+0.03 to +0.17) | +0.17 (+0.09 to +0.23) |
 
-The points effect is the same with a frozen squad, so new signings aren't what drives it.
-The chance-quality effect is larger when signings were possible, consistent with them
-adding something on top — but the groups are within noise of each other. The comparison
-already absorbs the *usual* January effect, since control windows from the same period
-include other clubs' January signings too; what it can't absorb is a sacking club
+The points effect holds with a frozen squad, so new signings aren't what drives it. The
+comparison already absorbs the *usual* January effect, since control windows from the same
+period include other clubs' January signings too. What it can't absorb is a sacking club
 signing more than usual.
 
 ### More leagues
@@ -162,10 +190,17 @@ Three rules keep the pooled estimate honest:
   confound and checks the intercepts remove it.
 - **Clubs stay distinct.** Windows and bootstrap clusters are keyed by league and club.
 
-The results then report every league on its own as well as pooled. As of September 2026
-only the Bundesliga has coach data (the others are 0%, blocked on Transfermarkt). On the
-combined table, every result is identical to the Bundesliga-only run, which is also how
-the change was checked.
+The results then report every league on its own as well as pooled.
+
+**Checks.**
+
+- **The combination changes nothing for the Bundesliga.** Before the other leagues had
+  coach data, the combined table reproduced every Bundesliga-only result exactly.
+- **The coach data is complete.** On 30 Sep 2026 all 141 other-league clubs had verified
+  coach histories, from Transfermarkt's league pages (see the engineering notes), and
+  every league has a known coach for 100% of its team-matches.
+- **The sackings are plausible.** There are 5 to 8 mid-season sackings per league-season,
+  and spot checks match real events (Dyche → Moyes at Everton, January 2025).
 
 ### How this compares with published research
 
@@ -184,17 +219,17 @@ synthetic-control design and report performance improvements after within-season
 changes. The paper is paywalled, so its effect size isn't compared here.
 
 **Our data through their designs.** To separate "different data" from "different method",
-`published_designs()` reruns this project's data (2014/15 on) with the two designs that
-can be reproduced from match data. Both compare the level after the change with teams
-matched on the before period:
+`published_designs()` reruns this project's five-league data (2014/15 on) with the two
+designs that can be reproduced from match data. Both compare the level after the change
+with teams matched on the before period:
 
-| Mid-season, this project's data | n | Points per game | Second outcome |
+| Mid-season, five leagues | n | Points per game | Second outcome |
 |---|---|---|---|
-| This project's design: 8 matches before/after, adjusted for PPG, xG and fixtures | 65 | **+0.19** (+0.04 to +0.30) | xG difference +0.31 (+0.11 to +0.46) |
-| Heuer et al.'s design: 10 before/after, matched on goal difference | 48 | +0.11 (−0.05 to +0.22) | goal difference +0.15 (−0.12 to +0.36) |
-| … same windows, this project's adjustment | 48 | +0.11 (−0.03 to +0.22) | |
-| Lundkvist et al.'s design: matched on the last 5 results, 10 matches after | 65 | +0.12 (−0.04 to +0.27) | xG difference +0.20 (−0.04 to +0.41) |
-| … same windows, this project's adjustment | 65 | +0.15 (+0.02 to +0.27) | |
+| This project's design: 8 matches before/after, adjusted for PPG, xG, fixtures, league | 384 | **+0.10 (+0.04 to +0.14)** | xG difference +0.19 (+0.13 to +0.24) |
+| Heuer et al.'s design: 10 before/after, matched on goal difference | 296 | +0.08 (+0.01 to +0.13) | goal difference +0.12 (+0.02 to +0.19) |
+| … same windows, this project's adjustment | 296 | +0.08 (+0.02 to +0.13) | |
+| Lundkvist et al.'s design: matched on the last 5 results, 10 matches after | 414 | +0.02 (−0.04 to +0.07) | xG difference +0.08 (−0.004 to +0.14) |
+| … same windows, this project's adjustment | 414 | +0.06 (+0.005 to +0.10) | |
 
 Measured this project's way, the result doesn't hinge on the choice of 8 matches
 (`horizon_sensitivity()`, always 8 matches before; longer horizons lose late-season
@@ -202,45 +237,51 @@ sackings):
 
 | Matches measured after the change | 4 | 6 | 8 | 10 | 12 |
 |---|---|---|---|---|---|
-| Sackings | 76 | 72 | 65 | 54 | 51 |
-| Points effect | +0.17 | +0.18 | +0.19 | +0.13 | +0.18 |
-| 95% interval | +0.02 to +0.30 | +0.05 to +0.28 | +0.04 to +0.30 | −0.00 to +0.24 | +0.06 to +0.29 |
+| Sackings | 424 | 407 | 384 | 353 | 321 |
+| Points effect | +0.12 | +0.10 | +0.10 | +0.08 | +0.08 |
+| 95% interval | +0.06 to +0.18 | +0.04 to +0.15 | +0.04 to +0.14 | +0.03 to +0.12 | +0.03 to +0.12 |
 
-**Reading it.** Every study agrees that most of the bounce is regression to the mean. On
-this data, every design gives a *positive* estimate of what's left, from +0.11 to +0.19
-points per game. Under the published designs the intervals include zero, the same verdict
-those papers reached; under this project's design they clear zero at every horizon except
-10 matches, where the interval ends at zero. So the fair statement is a small effect, most
-likely somewhere between zero and +0.3 points per game, rather than a proven one.
-Heuer et al.'s 1963–2009 estimate (95% roughly −0.05 to +0.09) overlaps the bottom of
-this project's interval.
+**Reading it.** Every study agrees that most of the bounce is regression to the mean. With
+five leagues, the question the Bundesliga alone couldn't settle has an answer:
 
-What moves the number is mostly *which matches are compared*, not how the adjustment is
-done. On the same windows, this project's adjustment gives the same +0.11 as matching on
-goal difference, and +0.15 against +0.12 for matching on the last five results. The
-published designs use 10 matches after the change, the horizon where the estimate
-happens to be weakest here, and Heuer et al.'s 10 matches on both sides drop 17 of the 65
-sackings: coaches who hadn't managed 10 games yet, and changes with fewer than 10 matches
-left in the season. All of these differences sit well within
-each other's intervals: this is a small effect measured with noise, not a contradiction.
+- **What's left is small but real:** about +0.10 points per game. It clears
+  zero at every horizon from 4 to 12 matches, somewhat larger over the shorter ones.
+- **Heuer et al.'s design finds it too:** +0.08 (+0.01 to +0.13).
+- **Lundkvist et al.'s design doesn't:** +0.02 (−0.04 to +0.07). It matches on the last five results
+  alone. On the same windows, this project's adjustment (xG, fixtures, league baselines)
+  gives +0.06 (+0.005 to +0.10).
+
+The published nulls fit this picture: an effect of about +0.1 takes hundreds of sackings
+to separate from zero. Heuer et al.'s own 1963–2009 estimate (95% roughly −0.05 to
++0.09) overlaps the bottom of this project's interval, and Lundkvist et al.'s intervals
+include +0.1.
 
 **The collapse before a sacking: luck or real?** Lundkvist et al. found results collapsing
 before a dismissal (1.28 → 0.34 points per match) while expected points stayed stable, and
-concluded that clubs react to bad luck. The same collapse in results shows up here (0.35
-and 0.15 points in the last two matches), but chance quality doesn't stay stable
-(`event_study_xgd` in the output). Until three matches before the change, sacked teams'
-xG difference was, if anything, better than expected. Then it fell to −0.83 and −1.08 per
-game, against about −0.49 expected, and the interval for the final match (−1.38 to −0.77)
-is well clear of it. In the Bundesliga, the last straw before a sacking is usually a
-genuinely bad performance, not only a bad result.
+concluded that clubs react to bad luck. The same collapse in results shows up here, but
+chance quality doesn't stay stable (`event_study_xgd` in the output):
 
-**Limitations.** 65 mid-season changes is still a modest sample; the windows are 8
-matches; the adjustment is linear in three variables; and clubs don't sack at random — a
-club might sack precisely when it expects the run to continue, which would bias the
-effect downward. Caretaker spells are kept as changes. "The change" means everything that
-changes at that moment (injuries, dressing-room mood, a new captain), not the new coach
-alone; the next thing that would separate those is squad data — minutes played by new
-signings and players returning from injury — from Transfermarkt.
+- until three matches before the change, sacked teams' xG difference was better than
+  expected (about −0.39 per game against −0.50);
+- then it fell to −0.67 and −0.81, against about
+  −0.47 expected;
+- the interval for the final match (−0.94 to
+  −0.69) is clear of the expected value.
+
+Across these five leagues, the last straw before a sacking is usually a genuinely bad
+performance, not only a bad result.
+
+**Limitations.**
+
+- **Precision.** 384 mid-season changes separate the effect from zero, but
+  leave its size uncertain (+0.04 to +0.14) and can't tell the leagues apart.
+- **Method.** The windows are 8 matches; the adjustment is linear; transfer windows use
+  German dates for every league; caretaker spells are kept as changes.
+- **Clubs don't sack at random.** A club might sack precisely when it expects the run to
+  continue, which would bias the effect downward.
+- **"The change" is more than the coach.** It means everything that changes at that moment
+  (injuries, dressing-room mood, a new captain), not the new coach alone. Squad data could
+  separate some of that; it is being collected for the Bundesliga.
 
 ## Match forecasts vs. the betting market
 
@@ -466,9 +507,9 @@ spread around it with a standard deviation of about 0.5 points per game.
 
 **What a change adds.** This is the study's mid-season estimate, the same for every club,
 because nothing in the data predicts which changes work better (see the coach-bounce
-predictor below). It is shown only for clubs at or below
-1.6 points per game, where 95% of mid-season sackings happened.
-Given the comparison with published research above, read it as "small, not proven".
+predictor below). It's the five-league estimate, +0.10 per game (+0.04 to +0.14): small, but clearly above
+zero. It is shown only for clubs at or below 1.6 points per game, where 95% of mid-season
+sackings in the five leagues happened.
 
 ## Coach-bounce predictor
 

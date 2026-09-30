@@ -6,14 +6,14 @@
 <title>Does Sacking the Coach Work?</title>
 <meta name="description" content="__OG_DESCRIPTION__">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Bundesliga Coach Impact">
-<meta property="og:title" content="Does sacking the coach work? Bundesliga, 2014 to today">
+<meta property="og:site_name" content="Does sacking the coach work?">
+<meta property="og:title" content="Does sacking the coach work? Europe's top five leagues, 2014 to today">
 <meta property="og:description" content="__OG_DESCRIPTION__">
 <meta property="og:url" content="__SITE_URL__">
 <meta property="og:image" content="__SITE_URL__og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Points per game match by match around a Bundesliga sacking: a collapse right before, a jump after, compared with teams that kept their coach.">
+<meta property="og:image:alt" content="Points per game match by match around a mid-season sacking in Europe's top five leagues: a collapse right before, a jump after, compared with teams that kept their coach.">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 <style>
@@ -130,7 +130,7 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
   </header>
 
   <section id="meter">
-    <h2>Sack-o-meter</h2>
+    <h2>Bundesliga sack-o-meter</h2>
     <p id="meter-text"></p>
     <div class="card">
       <div class="legend" id="meter-legend"></div>
@@ -204,7 +204,7 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
   </section>
 
   <section id="market">
-    <h2>How good are the match forecasts? Measured against the betting market</h2>
+    <h2>Bundesliga match forecasts, measured against the betting market</h2>
     <p id="market-text"></p>
     <div class="two">
       <div class="card">
@@ -236,7 +236,7 @@ code { font-size: 0.92em; background: var(--mid); padding: 1px 5px; border-radiu
   </section>
 
   <section id="formations">
-    <h2>Formation matchups</h2>
+    <h2>Bundesliga formation matchups</h2>
     <p id="form-text"></p>
     <div class="card">
       <p class="chart-title">Points per game for the team on the left, against the opponent formation on top</p>
@@ -348,14 +348,19 @@ function table(parent, head, rows, numCols = []) {
 
 // ---------- header --------------------------------------------------------
 const M = DATA.meta, CE = DATA.coach_effect, mid = CE.results.mid_season, B = DATA.benchmark;
-$("kicker").textContent = `Bundesliga ${M.seasons[0]} to ${M.seasons[1]} · ${M.matches.toLocaleString("en")} matches · data through ${day(M.data_through)}`;
+const SC = DATA.study || { leagues: ["Bundesliga"], matches: M.matches };
+const scope = SC.leagues.length === 5 ? "Europe's top five leagues" : SC.leagues.join(", ");
+$("kicker").textContent = `${scope} · ${M.seasons[0]} to ${M.seasons[1]} · ${(SC.matches || M.matches).toLocaleString("en")} matches · data through ${day(M.data_through)}`;
 const implied = CE.results.mid_season.ppg_implied_by_xgd_effect;
 para($("lede"), [
-  "Teams that sack their coach mid-season do improve. But teams in the same slump that ",
-  { b: "kept" }, " their coach improve by about two thirds as much — bad runs end on their own. ",
-  `What's left for the change itself is small \u2014 about ${fmt(mid.ppg.effect, 1)} points per game, `,
-  "a third of the raw bounce, and it shows up in chance quality too. Published studies find no clear effect at all; ",
-  "run through their designs, this data gives a smaller, less certain +0.1.",
+  `Across ${mid.ppg.n_treated} mid-season sackings${SC.leagues.length > 1 ? ` in ${scope}` : ""}, teams that sack their coach do improve: `,
+  `${fmt(mid.ppg.raw_change)} points per game. But teams in the same slump that `, { b: "kept" },
+  ` their coach improve by ${fmt(mid.ppg.counterfactual_change)} anyway \u2014 bad runs end on their own. `,
+  `What's left for the change itself is small: about `, { b: `${fmt(mid.ppg.effect, 2)} points per game` },
+  ` (95%: ${fmt(mid.ppg.effect_ci95[0])} to ${fmt(mid.ppg.effect_ci95[1])}), ${pct(mid.ppg.effect / mid.ppg.raw_change)} of the raw bounce, `,
+  "and it shows up in chance quality too.",
+  ...(mid.ppg.effect_ci95[0] > 0 && SC.leagues.length > 1
+    ? [` Single-league studies couldn't tell an effect this size from zero; ${mid.ppg.n_treated} sackings can.`] : []),
 ]);
 const tiles = [
   ["Improvement after a mid-season sacking", fmt(mid.ppg.raw_change), `points per game, next ${CE.window} matches vs. last ${CE.window} (n=${mid.ppg.n_treated})`],
@@ -377,7 +382,7 @@ for (const [label, value, sub, emph] of tiles) {
   const since = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   const tenure = (d) => d == null ? "" : d < 60 ? `${d} days in the job` : d < 730 ? `${Math.round(d / 30.4)} months in the job` : `${(d / 365.25).toFixed(1)} years in the job`;
   para($("meter-text"), [
-    "Every week: which clubs are in a slump, how much they would recover anyway, and what a coaching change might add on top. ",
+    "Every week, for every Bundesliga club: who is in a slump, how much they would recover anyway, and what a coaching change might add on top. ",
     "Sack risk is the chance of a new coach within the next ", { b: `${S.risk_horizon} matches` },
     `; a typical club-week is ${pct(base)}. Form and results through ${day(S.data_through)}`,
     S.coach_list_updated ? `, coaches as of ${day(S.coach_list_updated)}.` : ".",
@@ -496,7 +501,7 @@ for (const [label, value, sub, emph] of tiles) {
   para(p2, [{ b: "Recovery anyway. " }, `The same comparison as the study below: clubs in the same position that kept their coach, adjusted for form, xG difference and how much easier or harder the next ${S.recovery_horizon} fixtures are. Early in the season it uses as many matches as have been played (at least 4). It is an average for clubs in that position; a single club's next ${S.recovery_horizon} matches typically land within about ±${(S.clubs.find(c => c.expected_if_kept_sd) || {}).expected_if_kept_sd?.toFixed(1) ?? "0.4"} of it.`]);
   const p3 = html("p");
   para(p3, [{ b: "What a change adds. " }, `The study's estimate, ${fmt(S.effect.effect)} points per game (95%: ${fmt(S.effect.effect_ci95[0])} to ${fmt(S.effect.effect_ci95[1])}), the same for every club: nothing in the data predicts which changes work better. `,
-    `It's shown only for clubs at or below ${S.sacked_form_max.toFixed(1)} points per game, where 95% of mid-season sackings happened. As the research section explains, the effect is small and not proven.`]);
+    `It's shown only for clubs at or below ${S.sacked_form_max.toFixed(1)} points per game, where 95% of mid-season sackings happened. The effect is small, and measured across Europe's top five leagues rather than the Bundesliga alone.`]);
   m.append(p1, p2, p3);
 })();
 
@@ -705,11 +710,17 @@ const multiLeague = (CE.results.leagues || []).length > 1;
     hover(g, `${name}: ${sub}`, [[fmt(r.effect), "points per game"], [`${fmt(r.effect_ci95[0])} to ${fmt(r.effect_ci95[1])}`,
       "95% interval \u2014 " + (r.effect_ci95[0] > 0 ? "excludes zero" : "includes zero")]]);
   });
+  const clears = (r) => r.effect_ci95[0] > 0;
+  const design = (label, r) => `${label} gives ${fmt(r.effect)} (${fmt(r.effect_ci95[0])} to ${fmt(r.effect_ci95[1])}), ${clears(r) ? "clearly above zero" : "not clearly above zero"}`;
+  const heuerDesign = find("Heuer"), lundkvistDesign = find("Lundkvist");
   para($("lit-note"), [
-    "Every design gives a positive estimate on this data, from ",
-    { b: `${fmt(Math.min(...rows.slice(0, -1).map(r => r[2].effect)))} to ${fmt(mid.ppg.effect)}` },
-    " points per game, but under the published designs the intervals include zero, just as in the papers. On the same matches, this project's adjustment changes little; the difference comes mostly from which matches are compared. ",
-    "Everyone agrees that most of the bounce is regression to the mean. What's left is small, probably somewhere between zero and +0.3 points per game, and not proven.",
+    `On this data, ${design("Heuer et al.'s design", heuerDesign)}; ${design("Lundkvist et al.'s", lundkvistDesign)}. `,
+    `Comparing on recent points alone misses it; on Lundkvist et al.'s matches, adjusting for xG and fixture difficulty as well gives ${fmt(find("Lundkvist", "same").effect)} (${fmt(find("Lundkvist", "same").effect_ci95[0], Math.abs(find("Lundkvist", "same").effect_ci95[0]) < 0.01 ? 3 : 2)} to ${fmt(find("Lundkvist", "same").effect_ci95[1])}). `,
+    `Heuer et al.'s own 1963\u20132009 estimate (+0.02, 95% roughly \u22120.05 to +0.09) ${heuerPub.effect_ci95[1] >= mid.ppg.effect_ci95[0] ? "overlaps the lower end of this project's interval" : "sits below this project's interval"}. `,
+    "Everyone agrees that most of the bounce is regression to the mean. What's left is ",
+    { b: `about ${fmt(mid.ppg.effect, 2)} points per game` },
+    clears(mid.ppg) ? `: small enough to hide in one league's ${Math.min(...Object.values(CE.results.by_league || {}).map(r => r.ppg.n_treated), mid.ppg.n_treated)}-odd sackings, but clearly there across all of them.`
+                    : ", and not yet clearly above zero.",
   ]);
 })();
 
@@ -778,7 +789,7 @@ function renderNextMatchday() {
   const N = DATA.next_matchday;
   $("fixtures").replaceChildren();
   if (!N.round) { $("next").hidden = true; return; }
-  $("next-title").textContent = `Matchday ${N.round} forecasts`;
+  $("next-title").textContent = `Bundesliga matchday ${N.round} forecasts`;
   para($("next-text"), ["The pre-match model's probabilities for the next round, from each team's form as of ", { b: day(M.data_through) },
     ". This is the same model and the same code as ", { b: "bundesliga predict" }, " on the command line."]);
   for (const f of N.fixtures) {
@@ -850,7 +861,7 @@ new MutationObserver(renderThemed).observe(document.documentElement, { attribute
   p1.append("Data: Understat (results, xG, pressing), FBref (formations), Transfermarkt (coach tenures), football-data.co.uk (odds). ",
     "Method, tests and every number on this page are reproducible from the ");
   const a = html("a", "GitHub repository"); a.href = M.repo; p1.append(a, ".");
-  const p2 = html("p", `Page built ${M.generated}. The mid-season effect uses ${CE.window}-match windows, a linear adjustment for points and xG before the change, and a bootstrap that resamples whole teams.`);
+  const p2 = html("p", `Page built ${M.generated}. The mid-season effect uses ${CE.window}-match windows, a linear adjustment for points, xG and fixture difficulty with one baseline per league, and a bootstrap that resamples whole teams.`);
   f.append(p1, p2);
 })();
 </script>

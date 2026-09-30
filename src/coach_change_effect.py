@@ -502,22 +502,24 @@ def plot(windows: pd.DataFrame, results: dict, out_path: Path) -> None:
     # Left: every mid-season sacking vs. what teams in the same spot did anyway
     ax1.axhline(0, color=vs.INK_2, linewidth=1)
     ax1.plot(centers, ctrl_delta.to_numpy(), color=vs.SERIES[1], linewidth=2, marker="o", markersize=6,
-             markeredgecolor=vs.SURFACE, markeredgewidth=2, zorder=3,
+             markeredgecolor=vs.SURFACE, markeredgewidth=2, zorder=5,  # on top: it's the comparison
              label=f"Kept their coach (avg of {len(ctrl):,} windows)")
     # 8-match PPG only takes values in steps of 1/8, so sackings stack on
     # identical coordinates -- a small fixed-seed horizontal jitter keeps
     # every one of them visible (within +/-0.04, a third of a step).
     jitter = np.random.default_rng(0).uniform(-0.04, 0.04, len(tr))
-    ax1.scatter(tr["ppg_before"] + jitter, tr["ppg_after"] - tr["ppg_before"], s=55, color=vs.SERIES[0],
-                edgecolor=vs.SURFACE, linewidth=2, zorder=4,
+    # smaller and translucent with hundreds of sackings, so overlaps read as density
+    size, alpha = (55, 1.0) if len(tr) < 120 else (26, 0.55)
+    ax1.scatter(tr["ppg_before"] + jitter, tr["ppg_after"] - tr["ppg_before"], s=size, color=vs.SERIES[0],
+                alpha=alpha, edgecolor=vs.SURFACE, linewidth=1, zorder=4,
                 label=f"Sacked their coach mid-season (n={len(tr)})")
     ax1.set_xlabel("Points per game over the 8 matches before", color=vs.INK_2, fontsize=10)
     ax1.set_ylabel("Change in PPG over the next 8 matches", color=vs.INK_2, fontsize=10)
     ax1.set_xlim(-0.05, 3.0)
     ax1.legend(frameon=False, fontsize=9, loc="upper right", labelcolor=vs.INK)
     r = results["mid_season"]["ppg"]
-    ax1.set_title(f"Teams that sack their coach improve {r['raw_change']:+.2f} PPG \u2014 "
-                  f"but {r['counterfactual_change']:+.2f} of that happens anyway",
+    ax1.set_title(f"Sacked teams improve {r['raw_change']:+.2f} PPG; "
+                  f"{r['counterfactual_change']:+.2f} of that happens anyway",
                   loc="left", fontsize=11.5, color=vs.INK, fontweight="semibold")
 
     # Right: the effect left after adjustment, with team-bootstrap 95% CIs

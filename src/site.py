@@ -150,6 +150,18 @@ def _sack_o_meter() -> dict | None:
     return json.loads(path.read_text()) if path.exists() else None
 
 
+def _study_scope(results: dict) -> dict:
+    """What the coaching-change study covers: its leagues and their matches."""
+    leagues = results.get("leagues", [config.LEAGUE])
+    path = Path(config.PROCESSED_DIR) / "league_matches.parquet"
+    if path.exists():
+        lm = pd.read_parquet(path, columns=["league"])
+        matches = int(lm["league"].isin(leagues).sum() // 2)
+    else:
+        matches = None
+    return {"leagues": [config.LEAGUE_LABELS.get(lg, lg) for lg in leagues], "matches": matches}
+
+
 def collect() -> dict:
     m = pd.read_parquet(Path(config.PROCESSED_DIR) / "match_dataset.parquet")
     return {
@@ -160,7 +172,8 @@ def collect() -> dict:
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "repo": REPO_URL,
         },
-        "coach_effect": _coach_effect(),
+        "coach_effect": (ce := _coach_effect()),
+        "study": _study_scope(ce["results"]),
         "sack_o_meter": _sack_o_meter(),
         "benchmark": _benchmark(),
         "formations": _formations(),
@@ -176,7 +189,8 @@ def preview_text(data: dict) -> str:
     """The one-sentence summary link previews show, from the current numbers."""
     ppg = data["coach_effect"]["results"]["mid_season"]["ppg"]
     raw, anyway, effect = (_sign(ppg[k]) for k in ("raw_change", "counterfactual_change", "effect"))
-    return (f"Bundesliga teams that sack their coach mid-season improve by {raw} points per game, "
+    return (f"Across Europe's top five leagues, teams that sack their coach mid-season improve by {raw} "
+            f"points per game, "
             f"but similar teams that kept theirs improve {anyway} anyway. "
             f"What's left for the change itself: {effect}.")
 
@@ -193,7 +207,10 @@ def draw_preview_image(data: dict, out_path: Path) -> None:
     ppg, es = ce["results"]["mid_season"]["ppg"], ce["results"]["event_study"]
     fig = plt.figure(figsize=(12, 6.3), dpi=100, facecolor=vs.SURFACE)
     first = data["meta"]["seasons"][0]  # "2014-2015" -> "2014/15"
-    fig.text(0.05, 0.87, f"BUNDESLIGA SINCE {first[:4]}/{first[-2:]}  \u00b7  {ppg['n_treated']} MID-SEASON "
+    n_leagues = len(ce["results"].get("leagues", [config.LEAGUE]))
+    where = ("EUROPE'S TOP 5 LEAGUES" if n_leagues == 5 else "BUNDESLIGA" if n_leagues == 1
+             else f"{n_leagues} LEAGUES")
+    fig.text(0.05, 0.87, f"{where} SINCE {first[:4]}/{first[-2:]}  \u00b7  {ppg['n_treated']} MID-SEASON "
              "SACKINGS", fontsize=14, color=vs.INK_2, fontweight="bold")
     fig.text(0.05, 0.75, "Does sacking the coach work?", fontsize=40, color=vs.INK, fontweight="bold")
     stats = [(_sign(ppg["raw_change"]), "more points per game after a sacking", vs.INK),
