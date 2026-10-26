@@ -142,3 +142,16 @@ def test_feature_row_explanatory_uses_given_formations_not_recent_ones():
     row = predict.feature_row(_state("A", 1), _state("B", 1), "away", "4-3-3", "3-5-2")
     assert (row["formation"], row["opp_formation"], row["venue"]) == ("4-3-3", "3-5-2", "Away")
     assert "recent_formation" not in row
+
+
+def test_recent_formation_skips_matches_without_a_formation():
+    """Since results come from Understat (29 Sep 2026), the newest matches
+    have no formation while FBref refuses requests. pandas stores the missing
+    value as NaN in a string column, not None, and a NaN "formation" made the
+    forecast model crash the 19 and 26 Oct page builds."""
+    matches = _make_matches(8)
+    matches["formation"] = pd.array(["A", "B", "B", "A", "B", None, None, None], dtype="str")
+
+    state = predict.current_team_state("Alpha", matches, _make_coaches())
+
+    assert state["recent_formation"] == "B"  # the most common of the last 5 matches that have one

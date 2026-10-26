@@ -76,7 +76,10 @@ def test_repeat_meetings_join_in_date_order(build):
 
 def test_polite_session_names_the_project():
     session = ps.plain_session({"X-Requested-With": "XMLHttpRequest"})
-    assert "bundesliga-coach-impact" in session.headers["User-Agent"]
+    ua = session.headers["User-Agent"]
+    assert "bundesliga-coach-impact" in ua
+    # the project only: no URL, e-mail or account handle in anything sent to a site
+    assert not any(part in ua.lower() for part in ("http", "@", "github", "fpn1997"))
     assert session.headers["X-Requested-With"] == "XMLHttpRequest"
 
 

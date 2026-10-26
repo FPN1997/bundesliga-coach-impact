@@ -128,3 +128,20 @@ def test_track_record_marks_changes_too_early_to_score():
     st.loc[(st["team"] == "Alpha") & (st["season"] == "2223"), "risk"] = np.nan  # no reading yet
     rec = som.track_record(st, st["risk"])
     assert rec["n_scored"] == 1 and rec["n_too_early"] == 1
+
+
+def test_a_club_whose_last_match_has_no_coach_is_not_a_coaching_change():
+    """A team-match can have no coach (a gap between two spells in the
+    history, or a club missing from it). That must not read as "changed coach
+    since the last match": with no spell to point at, it crashed the whole
+    12 Oct 2026 refresh."""
+    no_spell = som.coach_spells(pd.DataFrame(columns=["team", "coach", "start_date"]))
+    day = pd.Timestamp("2026-10-12")
+    assert som.current_coach(no_spell, "Alpha", float("nan"), day) == (None, None, False)
+
+    spells = _spells([("Alpha", "A", "2025-07-01"), ("Alpha", "B", "2026-10-10")])
+    assert som.current_coach(spells, "Alpha", "A", pd.Timestamp("2026-10-12")) == ("B", "2026-10-10", True)
+    assert som.current_coach(spells, "Alpha", "B", pd.Timestamp("2026-10-12")) == ("B", "2026-10-10", False)
+    # the last match's coach unknown, the history names one: report it, but it isn't a change we saw
+    assert som.current_coach(spells, "Alpha", float("nan"), pd.Timestamp("2026-10-12")) == (
+        "B", "2026-10-10", False)
