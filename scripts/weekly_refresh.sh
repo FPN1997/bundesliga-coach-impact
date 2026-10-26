@@ -119,7 +119,10 @@ PUBLISH_STATUS=
 } >> "$LOG_FILE" 2>&1
 
 if [ "$STATUS" -eq 0 ]; then
-    echo "ok $(date '+%Y-%m-%dT%H:%M:%S') publish=${PUBLISH_STATUS:-skipped} $LOG_FILE" > "$STATUS_FILE"
+    # "ok" only when the page went out too: "ok publish=1" once hid two weeks
+    # of failed page builds (19 and 26 Oct 2026)
+    if [ "${PUBLISH_STATUS:-0}" -ne 0 ]; then state="ok-unpublished"; else state="ok"; fi
+    echo "$state $(date '+%Y-%m-%dT%H:%M:%S') publish=${PUBLISH_STATUS:-skipped} $LOG_FILE" > "$STATUS_FILE"
     if [ "${PUBLISH_STATUS:-0}" -ne 0 ]; then
         notify "Bundesliga results page not published" "Data refreshed OK, publishing failed (exit $PUBLISH_STATUS). See $(basename "$LOG_FILE")"
     elif grep -q "publish: published" "$LOG_FILE"; then

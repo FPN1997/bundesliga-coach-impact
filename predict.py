@@ -71,7 +71,8 @@ def _recent_formation(formations: list[str | None], window: int) -> str | None:
     silently be one match stale (verified live: 5/28 teams currently on
     record disagree between the two, e.g. a team that just switched
     formation in its most recent match)."""
-    played = [f for f in formations if f is not None][-window:]
+    # a missing formation arrives as NaN (pandas), not None
+    played = [f for f in formations if isinstance(f, str)][-window:]
     if not played:
         return None
     return Counter(played).most_common(1)[0][0]

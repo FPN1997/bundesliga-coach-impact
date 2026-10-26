@@ -269,6 +269,20 @@ def _upcoming(fbref: pd.DataFrame, last_played: pd.Timestamp) -> pd.DataFrame:
     return up.sort_values(["team", "date"])
 
 
+def current_coach(spells: pd.DataFrame, team: str, last_coach, today: pd.Timestamp
+                  ) -> tuple[str | None, str | None, bool]:
+    """(coach now, in charge since, changed since the club's last match), from
+    the coach history. The last match's coach can be unknown (NaN: a gap
+    between two spells, or a club the history lacks), and then no change can
+    be seen."""
+    spell = spells[(spells["team"] == team) & (spells["start_date"] <= today)].tail(1)
+    if spell.empty:
+        return (last_coach if pd.notna(last_coach) else None), None, False
+    coach = spell["coach"].iloc[0]
+    since = spell["start_date"].iloc[0].strftime("%Y-%m-%d")
+    return coach, since, bool(pd.notna(last_coach) and coach != last_coach)
+
+
 def current_meter(matches: pd.DataFrame, states: pd.DataFrame, odds: pd.DataFrame, fbref: pd.DataFrame,
                   spells: pd.DataFrame, risk_model, effect: dict, sacked_form_max: float,
                   today: pd.Timestamp | None = None) -> list[dict]:
@@ -281,19 +295,18 @@ def current_meter(matches: pd.DataFrame, states: pd.DataFrame, odds: pd.DataFram
     clubs = []
     today = pd.Timestamp.today().normalize() if today is None else today
     for r in latest.itertuples():
-        spell = spells[(spells["team"] == r.team) & (spells["start_date"] <= today)].tail(1)
-        coach_now = spell["coach"].iloc[0] if len(spell) else r.coach
+        coach_now, since, changed = current_coach(spells, r.team, r.coach, today)
         row = {"team": r.team, "coach": coach_now, "tenure_days": int(r.tenure_days),
                "season_matches": int(r.season_matches), "ppg_form": float(r.ppg_form),
                "market_xpts": None if np.isnan(r.market_xpts) else float(r.market_xpts),
                "xgd_form": None if np.isnan(r.xgd_form) else float(r.xgd_form),
                "ppg_last2": float(r.ppg_last2)}
-        if coach_now != r.coach:
+        if changed:
             # the change the meter is about has already happened, after the last match in the data
             row.update({"changed_since_last_match": True, "previous_coach": r.coach, "tenure_days": None,
-                        "coach_since": spell["start_date"].iloc[0].strftime("%Y-%m-%d")})
-        elif len(spell):
-            row["coach_since"] = spell["start_date"].iloc[0].strftime("%Y-%m-%d")
+                        "coach_since": since})
+        elif since:
+            row["coach_since"] = since
         if r.season_matches < MIN_SEASON_MATCHES or any(pd.isna(getattr(r, f)) for f in RISK_FEATURES):
             row["skipped"] = f"needs {MIN_SEASON_MATCHES} matches with xG and odds this season"
             clubs.append(row)

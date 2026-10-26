@@ -25,7 +25,7 @@ import soccerdata as sd
 
 log = logging.getLogger(__name__)
 
-USER_AGENT = "bundesliga-coach-impact/0.1 (+https://github.com/FPN1997/bundesliga-coach-impact)"
+USER_AGENT = "bundesliga-coach-impact/0.1"  # the project only, no personal handle or contact
 
 
 class SourceRefused(BaseException):
